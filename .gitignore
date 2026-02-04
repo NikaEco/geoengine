@@ -1,0 +1,46 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Test artifacts
+*.log
+*.tmp
+
+# Local config
+.env
+.env.local
+
+# Base image build artifacts (uncomment to ignore the folder)
+# /base-image/
+
+# Pixi environments (if building locally)
+.pixi/
+pixi.lock
+
+base-image/

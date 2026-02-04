@@ -1,0 +1,69 @@
+[package]
+name = "geoengine"
+version = "0.1.0"
+edition = "2021"
+authors = ["GeoEngine Team"]
+description = "Docker-based isolated runtime manager for geospatial workloads with ArcGIS Pro and QGIS integration"
+license = "MIT"
+repository = "https://github.com/user/geoengine"
+keywords = ["docker", "geospatial", "gis", "arcgis", "qgis"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "geoengine"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+
+# Docker API
+bollard = "0.16"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP server for proxy service
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+dirs = "5"
+which = "6"
+indicatif = "0.17"
+colored = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Process management
+sysinfo = "0.30"
+nix = { version = "0.28", features = ["signal", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi", "handleapi"] }
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
