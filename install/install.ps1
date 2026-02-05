@@ -15,7 +15,7 @@
 
 .EXAMPLE
     # Online installation
-    irm https://raw.githubusercontent.com/user/geoengine/main/install/install.ps1 | iex
+    irm https://raw.githubusercontent.com/NikaGeospatial/geoengine/main/install/install.ps1 | iex
 
 .EXAMPLE
     # Offline installation
@@ -31,7 +31,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$RepoUrl = "https://github.com/user/geoengine"
+$RepoUrl = "https://github.com/NikaGeospatial/geoengine"
 $BinaryName = "geoengine.exe"
 $ConfigDir = "$env:USERPROFILE\.geoengine"
 

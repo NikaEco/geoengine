@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["GeoEngine Team"]
 description = "Docker-based isolated runtime manager for geospatial workloads with ArcGIS Pro and QGIS integration"
 license = "MIT"
-repository = "https://github.com/user/geoengine"
+repository = "https://github.com/NikaGeospatial/geoengine"
 keywords = ["docker", "geospatial", "gis", "arcgis", "qgis"]
 categories = ["command-line-utilities", "development-tools"]
 

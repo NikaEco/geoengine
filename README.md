@@ -17,18 +17,18 @@ Docker-based isolated runtime manager for geospatial workloads with GPU support 
 
 **Linux/macOS/WSL2 (curl):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/user/geoengine/main/install/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/NikaGeospatial/geoengine/main/install/install.sh | bash
 ```
 
 **macOS (Homebrew):**
 ```bash
-brew tap user/geoengine
+brew tap NikaGeospatial/geoengine
 brew install geoengine
 ```
 
 **Windows (PowerShell as Admin):**
 ```powershell
-irm https://raw.githubusercontent.com/user/geoengine/main/install/install.ps1 | iex
+irm https://raw.githubusercontent.com/NikaGeospatial/geoengine/main/install/install.ps1 | iex
 ```
 
 **Offline Installation:**
@@ -269,7 +269,7 @@ POST /api/jobs
 
 ```bash
 # Requires Rust 1.70+
-git clone https://github.com/user/geoengine
+git clone https://github.com/NikaGeospatial/geoengine
 cd geoengine
 cargo build --release
 

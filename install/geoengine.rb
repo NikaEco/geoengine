@@ -1,32 +1,32 @@
 # Homebrew formula for GeoEngine
-# Usage: brew install user/tap/geoengine
+# Usage: brew install NikaGeospatial/tap/geoengine
 
 class Geoengine < Formula
   desc "Docker-based isolated runtime manager for geospatial workloads"
-  homepage "https://github.com/user/geoengine"
+  homepage "https://github.com/NikaGeospatial/geoengine"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     on_intel do
-      url "https://github.com/user/geoengine/releases/download/v#{version}/geoengine-darwin-x86_64.tar.gz"
+      url "https://github.com/NikaGeospatial/geoengine/releases/download/v#{version}/geoengine-darwin-x86_64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_DARWIN_X86_64"
     end
 
     on_arm do
-      url "https://github.com/user/geoengine/releases/download/v#{version}/geoengine-darwin-aarch64.tar.gz"
+      url "https://github.com/NikaGeospatial/geoengine/releases/download/v#{version}/geoengine-darwin-aarch64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_DARWIN_AARCH64"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/user/geoengine/releases/download/v#{version}/geoengine-linux-x86_64.tar.gz"
+      url "https://github.com/NikaGeospatial/geoengine/releases/download/v#{version}/geoengine-linux-x86_64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_X86_64"
     end
 
     on_arm do
-      url "https://github.com/user/geoengine/releases/download/v#{version}/geoengine-linux-aarch64.tar.gz"
+      url "https://github.com/NikaGeospatial/geoengine/releases/download/v#{version}/geoengine-linux-aarch64.tar.gz"
       sha256 "PLACEHOLDER_SHA256_LINUX_AARCH64"
     end
   end

@@ -17,9 +17,9 @@ about=GeoEngine provides Docker-based isolated runtimes for geospatial workloads
     - Support for custom Python and R scripts
     - Automatic tool discovery from registered projects
 
-tracker=https://github.com/user/geoengine/issues
-repository=https://github.com/user/geoengine
-homepage=https://github.com/user/geoengine
+tracker=https://github.com/NikaGeospatial/geoengine/issues
+repository=https://github.com/NikaGeospatial/geoengine
+homepage=https://github.com/NikaGeospatial/geoengine
 
 hasProcessingProvider=yes
 tags=docker,geoprocessing,gpu,machine learning,python,r,gdal,pytorch

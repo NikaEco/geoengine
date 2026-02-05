@@ -4,7 +4,7 @@
 # Supports Linux, macOS, and Windows WSL2
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/user/geoengine/main/install/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/NikaGeospatial/geoengine/main/install/install.sh | bash
 #
 # Or for offline installation:
 #   ./install.sh
@@ -20,7 +20,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO_URL="https://github.com/user/geoengine"
+REPO_URL="https://github.com/NikaGeospatial/geoengine"
 BINARY_NAME="geoengine"
 INSTALL_DIR="${GEOENGINE_INSTALL_DIR:-/usr/local/bin}"
 CONFIG_DIR="${HOME}/.geoengine"

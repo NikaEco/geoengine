@@ -1,12 +1,12 @@
 # GeoEngine Project Configuration
-# Documentation: https://github.com/user/geoengine
+# Documentation: https://github.com/NikaGeospatial/geoengine
 
 name: land-cover-classifier
 version: "1.0"
 
 # Base image (optional - can use Dockerfile instead)
 # Use the public nika-runtime image from Docker Hub
-base_image: nikaruntime/nika-runtime:latest
+base_image: lawrencenika/nika-runtime:latest
 
 # Build configuration
 build:
