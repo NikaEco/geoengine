@@ -225,7 +225,7 @@ impl DockerClient {
 
         // Use tar command to create archive
         let status = std::process::Command::new("tar")
-            .args(["-cf", tar_path.to_str().unwrap(), "-C", context.to_str().unwrap(), "."])
+            .args(["--no-xattrs", "-cf", tar_path.to_str().unwrap(), "-C", context.to_str().unwrap(), "."])
             .status()
             .context("Failed to create build context tar")?;
 

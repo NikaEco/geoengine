@@ -61,6 +61,9 @@ geoengine project build my-geospatial-project
 
 # Run a script
 geoengine project run my-geospatial-project train
+
+# Run a script with arguments (requires trailing double dash)
+geoengine project run my-geospatial-project predict -- --input-raster /path/to/image.tif
 ```
 
 ### Run Containers Directly
