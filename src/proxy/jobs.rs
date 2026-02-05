@@ -202,7 +202,7 @@ impl JobManager {
             .map(|(id, _)| *id)
             .collect();
 
-        for job_id in running_ids {
+        for _job_id in running_ids {
             // TODO: Check container status and update job
         }
 
@@ -254,7 +254,7 @@ impl JobManager {
         }
 
         // Add output directory
-        if let Some(output_dir) = &job.request.output_dir {
+        if job.request.output_dir.is_some() {
             env_vars.insert("GEOENGINE_OUTPUT_DIR".to_string(), "/output".to_string());
         }
 
@@ -284,7 +284,7 @@ impl JobManager {
         }
 
         // Add input file mounts
-        for (key, value) in &job.request.inputs {
+        for (_key, value) in &job.request.inputs {
             if let Some(path_str) = value.as_str() {
                 let path = std::path::Path::new(path_str);
                 if path.exists() && path.is_file() {

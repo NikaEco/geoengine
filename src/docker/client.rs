@@ -2,10 +2,8 @@ use anyhow::{Context, Result};
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, StartContainerOptions, WaitContainerOptions};
 use bollard::image::{BuildImageOptions, CreateImageOptions, ImportImageOptions, TagImageOptions};
 use bollard::Docker;
-use bytes::BytesMut;
 use futures::StreamExt;
 use std::collections::HashMap;
-use std::io;
 use std::path::PathBuf;
 use tokio::io::AsyncWriteExt;
 
@@ -41,21 +39,16 @@ impl DockerClient {
 
     /// Import a Docker image from a tar file
     pub async fn import_image(&self, tarfile: &PathBuf, tag: Option<&str>) -> Result<String> {
-        let file = tokio::fs::File::open(tarfile)
+        // Read the entire tar file into memory
+        let file_contents = tokio::fs::read(tarfile)
             .await
-            .with_context(|| format!("Failed to open tar file: {}", tarfile.display()))?;
-
-        let byte_stream = tokio_util::codec::FramedRead::new(
-            file,
-            tokio_util::codec::BytesCodec::new(),
-        )
-        .map(|r: Result<BytesMut, io::Error>| r.map(|b| b.freeze()));
+            .with_context(|| format!("Failed to read tar file: {}", tarfile.display()))?;
 
         let options = ImportImageOptions {
             ..Default::default()
         };
 
-        let mut stream = self.docker.import_image(options, byte_stream, None);
+        let mut stream = self.docker.import_image(options, file_contents.into(), None);
 
         let mut image_id = String::new();
         while let Some(result) = stream.next().await {
@@ -368,7 +361,7 @@ impl DockerClient {
             .collect();
 
         // Build bind mounts
-        let mut binds: Vec<String> = config
+        let binds: Vec<String> = config
             .mounts
             .iter()
             .map(|(host, container, ro)| {
@@ -403,7 +396,7 @@ impl DockerClient {
         }
 
         // GPU configuration
-        if let Some(gpu_config) = &config.gpu_config {
+        if let Some(_gpu_config) = &config.gpu_config {
             host_config.device_requests = Some(vec![bollard::models::DeviceRequest {
                 driver: Some("nvidia".to_string()),
                 count: Some(-1), // All GPUs
