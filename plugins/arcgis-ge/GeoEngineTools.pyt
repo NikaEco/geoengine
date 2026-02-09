@@ -6,7 +6,6 @@ Invokes the geoengine CLI directly to execute containerized geoprocessing tools.
 
 import arcpy
 import os
-import time
 from geoengine_client import GeoEngineClient
 
 

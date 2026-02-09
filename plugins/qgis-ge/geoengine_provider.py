@@ -45,10 +45,15 @@ class GeoEngineCLIClient:
     @staticmethod
     def _find_binary() -> str:
         """Locate the geoengine binary."""
-        if "/usr/local/bin" not in os.environ["PATH"]:
-            os.environ["PATH"] += ":/usr/local/bin"
-        path = shutil.which('geoengine')
+        current_path = os.environ.get("PATH", "")
+        search_path = current_path
+        if "/usr/local/bin" not in current_path:
+            search_path = current_path + ":/usr/local/bin"
+        path = shutil.which('geoengine', path=search_path)
         if path:
+            # Persist the updated PATH only once, when binary is actually found there
+            if search_path != current_path:
+                os.environ["PATH"] = search_path
             return path
 
         home = os.path.expanduser('~')
@@ -142,12 +147,16 @@ class GeoEngineCLIClient:
             if process.returncode == 0 and stdout_data.strip():
                 return json.loads(stdout_data)
             elif process.returncode != 0:
+                error_detail = {}
                 if stdout_data.strip():
                     try:
-                        return json.loads(stdout_data)
+                        error_detail = json.loads(stdout_data)
                     except json.JSONDecodeError:
                         pass
-                raise Exception(f"Tool exited with code {process.returncode}")
+                raise Exception(
+                    f"Tool exited with code {process.returncode}: "
+                    f"{error_detail.get('error', 'unknown error')}"
+                )
             else:
                 return {'status': 'completed', 'exit_code': 0, 'files': []}
         finally:
@@ -208,7 +217,9 @@ class GeoEngineProvider(QgsProcessingProvider):
                     alg = GeoEngineAlgorithm(project['name'], tool)
                     algorithms.append(alg)
 
-        except Exception:
+
+        except Exception as e:
+            print("GeoEngine tool discovery failed: %s", e)
             # Binary not found or other error, return empty list
             pass
 
@@ -344,7 +355,7 @@ class GeoEngineAlgorithm(QgsProcessingAlgorithm):
                 elif hasattr(value, 'dataProvider'):
                     value = value.dataProvider().dataSourceUri()
 
-                inputs[name] = str(value) if value else None
+                inputs[name] = str(value) if value is not None else None
 
         # Get output directory
         output_dir = self.parameterAsString(parameters, 'OUTPUT_DIR', context)

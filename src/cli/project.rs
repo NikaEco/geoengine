@@ -736,12 +736,12 @@ async fn run_tool(
         let path = Path::new(value);
         let processed_value = if path.exists() {
             if path.is_file() {
-                // Mount file read-only into /inputs/
-                if let Some(filename) = path.file_name() {
+                // Mount file read-only into /inputs/<key>/
+                if let Some(_filename) = path.file_name() {
                     let abs_path = path
                         .canonicalize()
                         .with_context(|| format!("Failed to resolve input path: {}", value))?;
-                    let container_path = format!("/inputs/{}", filename.to_string_lossy());
+                    let container_path = format!("/inputs/{}/{}", key, _filename.to_string_lossy());
                     extra_mounts.push((
                         abs_path.to_string_lossy().to_string(),
                         container_path.clone(),

@@ -161,6 +161,7 @@ gis:
 | `name` | String | **Yes** | — | Parameter name |
 | `type` | String | **Yes** | — | Parameter type (see below) |
 | `label` | String | No | `None` | Display label in GIS UI |
+| `map_to` | String | No | `None` | CLI flag name override (defaults to `name`) |
 | `description` | String | No | `None` | Description/help text |
 | `default` | Any | No | `None` | Default value |
 | `required` | Boolean | No | `true` | Whether parameter is required |
@@ -173,7 +174,7 @@ gis:
 | `raster` | Raster data (GeoTIFF, etc.) |
 | `vector` | Vector data (Shapefile, GeoJSON, etc.) |
 | `file` | General file type |
-| `folder` | General directory
+| `folder` | General directory |
 | `string` | Text value |
 | `int` | Integer value |
 | `float` | Floating-point value |

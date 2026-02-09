@@ -6,7 +6,6 @@ GeoEngine QGIS Plugin - Main plugin class
 from qgis.core import QgsApplication
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtGui import QIcon
-import os
 
 from .geoengine_provider import GeoEngineProvider, GeoEngineCLIClient
 
