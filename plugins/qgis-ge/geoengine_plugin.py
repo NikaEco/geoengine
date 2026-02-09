@@ -77,7 +77,11 @@ class GeoEnginePlugin:
         return action
 
     def unload(self):
-        """Remove the plugin menu items and icons from QGIS GUI."""
+        """
+        Unregister plugin actions from QGIS menus and remove the GeoEngine processing provider from the processing registry.
+        
+        This removes all actions previously added to the plugin menu and, if a provider is registered, unregisters it from QgsApplication.processingRegistry().
+        """
         # Remove menu items
         for action in self.actions:
             self.iface.removePluginMenu(self.menu, action)
@@ -87,7 +91,11 @@ class GeoEnginePlugin:
             QgsApplication.processingRegistry().removeProvider(self.provider)
 
     def show_status(self):
-        """Show GeoEngine CLI status."""
+        """
+        Display GeoEngine CLI status in an information dialog.
+        
+        Queries the local GeoEngine CLI for version and project list, then shows a dialog with GeoEngine version, status, number of registered projects, and each project's name with its tools count. If the geoengine CLI executable is not found, shows a warning advising installation and PATH setup; on other errors shows a warning with the encountered error message.
+        """
         try:
             client = GeoEngineCLIClient()
             info = client.version_check()
@@ -122,7 +130,11 @@ class GeoEnginePlugin:
             )
 
     def refresh_tools(self):
-        """Refresh the list of available tools."""
+        """
+        Refreshes the GeoEngine processing provider and updates the available tool list.
+        
+        If a provider is registered, removes it from the QGIS processing registry and replaces it with a newly initialized provider so the available algorithms/tools are reloaded. Shows an informational dialog on success and a warning dialog containing the error message on failure.
+        """
         try:
             if self.provider:
                 # Remove and re-add provider to refresh algorithms

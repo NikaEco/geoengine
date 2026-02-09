@@ -40,11 +40,27 @@ class GeoEngineCLIClient:
     """Client that invokes the geoengine CLI binary via subprocess."""
 
     def __init__(self):
+        """
+        Initialize the GeoEngine CLI client by locating the `geoengine` executable and storing its path on `self.binary`.
+        
+        Raises:
+            FileNotFoundError: If the `geoengine` binary cannot be found on PATH or in known installation locations.
+        """
         self.binary = self._find_binary()
 
     @staticmethod
     def _find_binary() -> str:
-        """Locate the geoengine binary."""
+        """
+        Locate the geoengine executable on the host system.
+        
+        Searches the current PATH (adds /usr/local/bin if absent) and then checks common user-install locations (~/.geoengine/bin and ~/.cargo/bin). Returns the absolute filesystem path to the first executable found.
+        
+        Returns:
+            str: Absolute path to the geoengine executable.
+        
+        Raises:
+            FileNotFoundError: If no executable is found; message suggests installing geoengine or adding it to PATH.
+        """
         if "/usr/local/bin" not in os.environ["PATH"]:
             os.environ["PATH"] += ":/usr/local/bin"
         path = shutil.which('geoengine')
@@ -66,6 +82,15 @@ class GeoEngineCLIClient:
         )
 
     def version_check(self) -> Dict:
+        """
+        Check that the configured geoengine binary responds and return its version.
+        
+        Returns:
+            dict: A dictionary with keys 'status' (value 'healthy') and 'version' (the trimmed stdout from the geoengine binary).
+        
+        Raises:
+            Exception: If the geoengine process exits with a non-zero status; the exception message includes the process stderr.
+        """
         result = subprocess.run(
             [self.binary, '--version'],
             capture_output=True, text=True, timeout=10
@@ -75,6 +100,17 @@ class GeoEngineCLIClient:
         return {'status': 'healthy', 'version': result.stdout.strip()}
 
     def list_projects(self) -> List[Dict]:
+        """
+        Retrieve the list of available GeoEngine projects using the installed geoengine CLI.
+        
+        Returns:
+            A list of project dictionaries parsed from the CLI's JSON output.
+        
+        Raises:
+            Exception: If the geoengine CLI exits with a non-zero status (error message included).
+            subprocess.TimeoutExpired: If the CLI call times out.
+            json.JSONDecodeError: If the CLI produces invalid JSON.
+        """
         result = subprocess.run(
             [self.binary, 'project', 'list', '--json'],
             capture_output=True, text=True, timeout=30
@@ -84,6 +120,18 @@ class GeoEngineCLIClient:
         return json.loads(result.stdout)
 
     def get_project_tools(self, name: str) -> List[Dict]:
+        """
+        Retrieve the list of tools for a GeoEngine project by name.
+        
+        Parameters:
+            name (str): The project name to query.
+        
+        Returns:
+            List[Dict]: Parsed JSON value representing the project's tools (typically a list of tool metadata dictionaries).
+        
+        Raises:
+            Exception: If the geoengine CLI exits with a non-zero code; the exception message includes the CLI stderr.
+        """
         result = subprocess.run(
             [self.binary, 'project', 'tools', name],
             capture_output=True, text=True, timeout=30
@@ -101,12 +149,22 @@ class GeoEngineCLIClient:
         on_output: Optional[Callable[[str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict:
-        """Run a tool synchronously, streaming container output via on_output.
-
-        Input parameters are passed as --input KEY=VALUE flags.
-        The CLI maps these to script flags using the tool's input definitions
-        (using map_to if specified, otherwise the input name).
-        File paths are auto-mounted into the container.
+        """
+        Execute a GeoEngine project tool via the geoengine CLI, streaming CLI stderr to a callback and supporting cancellation.
+        
+        Parameters:
+            project (str): Name of the GeoEngine project containing the tool.
+            tool (str): Tool name to run within the project.
+            inputs (Dict[str, Any]): Mapping of tool input names to values; None values are omitted.
+            output_dir (Optional[str]): Path to a directory for tool outputs, passed to the CLI if provided.
+            on_output (Optional[Callable[[str], None]]): Optional callback invoked for each non-empty stderr line produced by the CLI.
+            is_cancelled (Optional[Callable[[], bool]]): Optional callable checked periodically; if it returns `True` the running CLI process is terminated and the call aborts.
+        
+        Returns:
+            Dict: Parsed JSON result emitted on the CLI stdout, or a summary dict with `status`, `exit_code`, and `files` when no JSON is produced.
+        
+        Raises:
+            Exception: If the tool exits with a non-zero exit code or if the job is cancelled by the caller.
         """
         cmd = [self.binary, 'project', 'run-tool', project, tool, '--json']
         if output_dir:
@@ -190,12 +248,23 @@ class GeoEngineProvider(QgsProcessingProvider):
         return QgsProcessingProvider.icon(self)
 
     def loadAlgorithms(self):
-        """Load algorithms into the provider."""
+        """
+        Register algorithms with the QGIS processing provider.
+        """
         for alg in self._algorithms:
             self.addAlgorithm(alg)
 
     def _discover_algorithms(self) -> List[QgsProcessingAlgorithm]:
-        """Discover algorithms from geoengine CLI."""
+        """
+        Discover available GeoEngine algorithms via the geoengine CLI.
+        
+        Attempts to query the local `geoengine` executable for projects and their tools and constructs
+        a list of corresponding QgsProcessingAlgorithm instances. If discovery fails (for example,
+        if the CLI binary is not found or an error occurs while querying), an empty list is returned.
+        
+        Returns:
+            List[QgsProcessingAlgorithm]: Discovered algorithms, or an empty list if discovery failed.
+        """
         algorithms = []
 
         try:
@@ -272,7 +341,24 @@ class GeoEngineAlgorithm(QgsProcessingAlgorithm):
                 self.addParameter(param)
 
     def _create_parameter(self, param_info: Dict, is_output: bool):
-        """Create a QGIS parameter from tool parameter info."""
+        """
+        Create a QgsProcessingParameter (or destination) from tool parameter metadata.
+        
+        Parameters:
+            param_info (Dict): Metadata describing the parameter. Recognized keys:
+                - 'param_type' (str): type hint such as 'string', 'int', 'float', 'bool',
+                  'raster', 'vector', 'file', or 'folder' (defaults to 'string').
+                - 'name' (str): parameter identifier (required).
+                - 'label' (str): human-readable label (defaults to name).
+                - 'required' (bool): whether the parameter is required (defaults to True).
+                - 'default': default value for the parameter, when applicable.
+                - 'choices' (List[str]): enumeration options for string parameters.
+            is_output (bool): If True, create an output/destination parameter; otherwise create an input parameter.
+        
+        Returns:
+            QgsProcessingParameter or None: A concrete QgsProcessingParameter subclass appropriate for the metadata,
+            or None when the requested output type is not supported.
+        """
         param_type = param_info.get('param_type', 'string')
         name = param_info['name']
         label = param_info.get('label', name)
@@ -328,7 +414,13 @@ class GeoEngineAlgorithm(QgsProcessingAlgorithm):
         context: QgsProcessingContext,
         feedback: QgsProcessingFeedback
     ) -> Dict:
-        """Execute the algorithm via geoengine CLI."""
+        """
+        Execute the configured GeoEngine tool via the geoengine CLI, stream CLI output to the QGIS feedback, and collect resulting output file paths.
+        
+        Streams stderr/stdout lines from the CLI to feedback.pushInfo and periodically checks feedback.isCanceled() to support user cancellation. Matches returned files to declared outputs by case-insensitive name containment.
+        
+        @returns Dictionary mapping output parameter names (and the 'OUTPUT_DIR' key) to their filesystem paths; outputs are matched case-insensitively against the tool's returned file names.
+        """
         client = GeoEngineCLIClient()
 
         # Build inputs

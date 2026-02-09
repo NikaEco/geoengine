@@ -17,14 +17,27 @@ class GeoEngineClient:
 
     def __init__(self):
         """
-        Initialize the GeoEngine client.
-        Locates the geoengine binary on the system.
+        Create a GeoEngineClient and locate the `geoengine` CLI binary.
+        
+        Attempts to locate the `geoengine` executable and stores its filesystem path on `self.binary`.
+        Raises FileNotFoundError if the binary cannot be found.
         """
         self.binary = self._find_binary()
 
     @staticmethod
     def _find_binary() -> str:
-        """Locate the geoengine binary."""
+        """
+        Locate the geoengine executable binary on the system.
+        
+        Searches the system PATH first, then checks common fallback locations under the user's home directory
+        (e.g., ~/.geoengine/bin/geoengine and ~/.cargo/bin/geoengine).
+        
+        Returns:
+            path (str): Absolute path to the geoengine executable.
+        
+        Raises:
+            FileNotFoundError: If the geoengine executable cannot be found or is not executable.
+        """
         path = shutil.which('geoengine')
         if path:
             return path
@@ -46,10 +59,15 @@ class GeoEngineClient:
 
     def version_check(self) -> Dict:
         """
-        Check the geoengine binary version.
-
+        Verify the installed geoengine CLI is usable and return its reported version.
+        
         Returns:
-            Dict with status and version information
+            A dict with keys:
+              - 'status': the string 'healthy' when the CLI ran successfully.
+              - 'version': the version string reported by the geoengine CLI.
+        
+        Raises:
+            Exception: If the geoengine process exits with a non-zero code; the exception message contains the CLI stderr.
         """
         result = subprocess.run(
             [self.binary, '--version'],
@@ -64,10 +82,14 @@ class GeoEngineClient:
 
     def list_projects(self) -> List[Dict]:
         """
-        List all registered projects.
-
+        List all registered GeoEngine projects.
+        
         Returns:
-            List of project summaries with name, path, and tools_count
+            A list of project summary dictionaries. Each dictionary contains at least the keys
+            `name`, `path`, and `tools_count`.
+        
+        Raises:
+            Exception: If the geoengine CLI invocation fails.
         """
         result = subprocess.run(
             [self.binary, 'project', 'list', '--json'],
@@ -79,13 +101,16 @@ class GeoEngineClient:
 
     def get_project_tools(self, name: str) -> List[Dict]:
         """
-        Get the list of tools available in a project.
-
-        Args:
-            name: Project name
-
+        Retrieve tool definitions for the specified project.
+        
+        Parameters:
+            name (str): Project name to query.
+        
         Returns:
-            List of tool definitions with inputs and outputs
+            A list of tool definition dictionaries parsed from the CLI's JSON output.
+        
+        Raises:
+            Exception: If the geoengine CLI fails to retrieve tools; the exception message will contain the CLI stderr.
         """
         result = subprocess.run(
             [self.binary, 'project', 'tools', name],
@@ -105,26 +130,23 @@ class GeoEngineClient:
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict:
         """
-        Run a GIS tool synchronously, streaming progress via on_output callback.
-
-        Input parameters are passed as --input KEY=VALUE flags.
-        The CLI maps these to script flags using the tool's input definitions
-        (using map_to if specified, otherwise the input name).
-        File paths are auto-mounted into the container.
-
-        Args:
-            project: Project name
-            tool: Tool name to execute
-            inputs: Input parameters as key-value pairs
-            output_dir: Directory to write output files
-            on_output: Callback called with each line of container output
-            is_cancelled: Callback that returns True if the user requested cancellation
-
+        Execute a GeoEngine project tool synchronously and stream its realtime output.
+        
+        Parameters:
+            project (str): Name of the project containing the tool.
+            tool (str): Name of the tool to execute.
+            inputs (Dict[str, Any]): Mapping of tool input names to values; entries with value None are skipped.
+            output_dir (Optional[str]): Optional directory where the tool should write output files.
+            on_output (Optional[Callable[[str], None]]): Optional callback invoked for each line of realtime output (stderr).
+            is_cancelled (Optional[Callable[[], bool]]): Optional callback that should return True to request job cancellation.
+        
         Returns:
-            Dict with status, exit_code, output_dir, and files list
-
+            Dict: Parsed JSON result from the tool on success, or a summary dict when no structured output is produced.
+                Typical successful JSON is returned as-is. When the tool exits with code 0 but produces no stdout,
+                returns {'status': 'completed', 'exit_code': 0, 'files': []}.
+        
         Raises:
-            Exception: If the tool fails or is cancelled
+            Exception: If the tool process exits with a non-zero code, or if the job is cancelled via is_cancelled.
         """
         cmd = [self.binary, 'project', 'run-tool', project, tool, '--json']
         if output_dir:
@@ -190,17 +212,20 @@ def run_tool(
     on_output: Optional[Callable[[str], None]] = None,
 ) -> Dict:
     """
-    Run a GeoEngine tool and wait for completion.
-
-    Args:
-        project: Project name
-        tool: Tool name
-        inputs: Input parameters
-        output_dir: Output directory
-        on_output: Callback for progress output lines
-
+    Execute a GeoEngine tool via the GeoEngine CLI and return the tool's result.
+    
+    Parameters:
+        project (str): Name of the project containing the tool.
+        tool (str): Name of the tool to run.
+        inputs (Dict[str, Any]): Mapping of tool input names to values.
+        output_dir (Optional[str]): Directory where the tool should write outputs, if supported.
+        on_output (Optional[Callable[[str], None]]): Optional callback invoked for each line of progress/output emitted by the tool (receives the line as a string).
+    
     Returns:
-        Dict with status, exit_code, output_dir, and files list
+        Dict: The tool run result. On success this is the parsed JSON output produced by the CLI; if the CLI produces no JSON it will be a dict such as {'status': 'completed', 'exit_code': 0, 'files': [...]}.
+    
+    Raises:
+        Exception: If the CLI invocation fails, returns a non-zero exit code, or the job is cancelled.
     """
     client = GeoEngineClient()
     return client.run_tool(project, tool, inputs, output_dir, on_output=on_output)

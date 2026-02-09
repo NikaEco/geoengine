@@ -114,6 +114,21 @@ pub enum ProjectCommands {
 }
 
 impl ProjectCommands {
+    /// Dispatches the selected `ProjectCommands` variant to its corresponding handler.
+    ///
+    /// Executes the action represented by this enum instance (init, register, unregister, list,
+    /// tools, run-tool, build, run, or show) and returns the result of that operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use futures::executor::block_on;
+    ///
+    /// // Construct a command (adjust fields as needed for other variants)
+    /// let cmd = ProjectCommands::List { json: true };
+    /// let result = block_on(cmd.execute());
+    /// assert!(result.is_ok());
+    /// ```
     pub async fn execute(self) -> Result<()> {
         match self {
             Self::Init { name, output } => init_project(name.as_deref(), output.as_ref()).await,
@@ -211,6 +226,49 @@ async fn register_project(path: &PathBuf, name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Unregisters a project by its registration name from the saved settings.
+
+///
+
+/// This removes the project entry stored in the user's settings and persists the change.
+
+/// On success a confirmation message is printed to stdout.
+
+///
+
+/// # Parameters
+
+///
+
+/// - `name`: The registration name of the project to remove (the key used when registering).
+
+///
+
+/// # Returns
+
+///
+
+/// `Ok(())` on success, `Err` if loading, unregistering, or saving the settings fails.
+
+///
+
+/// # Examples
+
+///
+
+/// ```
+
+/// # use anyhow::Result;
+
+/// # async fn doc() -> Result<()> {
+
+/// unregister_project("my-project").await?;
+
+/// # Ok(())
+
+/// # }
+
+/// ```
 async fn unregister_project(name: &str) -> Result<()> {
     let mut settings = Settings::load()?;
     settings.unregister_project(name)?;
@@ -225,6 +283,23 @@ async fn unregister_project(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Lists registered projects either as a human-readable table or as JSON.
+///
+/// When `json` is `true`, prints a JSON array of objects with `name`, `path`, and
+/// `tools_count` for each registered project. When `json` is `false`, prints a
+/// formatted table showing each project's name, path, and a status marker
+/// indicating whether a `geoengine.yaml` exists at the project path.
+///
+/// # Examples
+///
+/// ```
+/// // Run the async function from a synchronous context for demonstration.
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     // Print projects as JSON
+///     let _ = crate::cli::project::list_projects(true).await;
+/// });
+/// ```
 async fn list_projects(json: bool) -> Result<()> {
     let settings = Settings::load()?;
     let projects = settings.list_projects();
@@ -277,6 +352,32 @@ async fn list_projects(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Builds a Docker image for the given project using the project's build configuration.
+///
+/// The function loads the project's configuration (geoengine.yaml), determines the Dockerfile
+/// and build context (using config overrides when present), merges build arguments from the
+/// config with `build_args` (CLI `KEY=VALUE` strings override config values), runs the Docker
+/// build, and tags the resulting image as `geoengine-{name}:latest`. Progress is shown during the
+/// build and a success message with the image tag is printed on completion.
+///
+/// # Parameters
+/// - `project`: The registered project name to build (as stored in settings).
+/// - `no_cache`: When `true`, instructs Docker to build without using the cache.
+/// - `build_args`: Extra build arguments in the form `KEY=VALUE`; values here override config args.
+///
+/// # Returns
+/// Returns `Ok(())` on successful build, or an error if loading settings/config, locating files,
+/// or the Docker build itself fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// # async fn doc_example() -> anyhow::Result<()> {
+/// // Build with an extra build argument and without using the cache
+/// build_project("my-project", true, &["VERSION=1.2.3".to_string()]).await?;
+/// # Ok(())
+/// # }
+/// ```
 async fn build_project(project: &str, no_cache: bool, build_args: &[String]) -> Result<()> {
     let settings = Settings::load()?;
     let project_path = settings.get_project_path(project)?;
@@ -370,6 +471,24 @@ struct RunOptions {
     display_name: String,
 }
 
+/// Runs the named script for a registered project with default run options.
+///
+/// This delegates to `run_project_with_options` using default mounts, environment,
+/// and JSON/output settings while setting the displayed name to the script.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use anyhow::Result;
+/// # async fn example() -> Result<()> {
+/// run_project("my-project", "build", &Vec::new()).await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Returns
+///
+/// `Ok(())` if the script completed successfully, or an error describing the failure.
 async fn run_project(project: &str, script: &str, args: &[String]) -> Result<()> {
     let options = RunOptions {
         display_name: format!("script '{}'", script),
@@ -378,8 +497,44 @@ async fn run_project(project: &str, script: &str, args: &[String]) -> Result<()>
     run_project_with_options(project, script, args, options).await
 }
 
-/// Core function that runs a project script with configurable options.
-/// Used by both `project run` and `project run-tool`.
+/// Runs a project's script inside a container using the provided execution options.
+///
+/// Loads the project configuration, prepares environment variables and mounts (from both
+/// the project runtime config and the supplied `options`), constructs the container command
+/// (including safely escaped arguments), detects optional GPU settings, runs the container,
+/// and reports the result either as human-readable output or as a JSON object (when
+/// `options.json_output` is true). If the container exits with a non-zero code this function
+/// will terminate the process with that exit code.
+///
+/// # Parameters
+///
+/// - `project` — The registered project name to resolve the project path and configuration.
+/// - `script` — The key of the script to execute as defined in the project's `scripts`.
+/// - `args` — Additional command-line arguments that will be shell-escaped and appended to the script.
+/// - `options` — Runtime options controlling mounts, environment variables, JSON output mode, output directory,
+///   and the display name used in status messages.
+///
+/// # Returns
+///
+/// `Ok(())` on successful execution (or after printing JSON result). The process will exit with the
+/// container's exit code if the container terminates with a non-zero status.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::PathBuf;
+/// # async fn example() -> anyhow::Result<()> {
+/// let options = crate::cli::project::RunOptions {
+///     extra_mounts: vec![(String::from("/host/path"), String::from("/container/path"), true)],
+///     extra_env: std::collections::HashMap::new(),
+///     json_output: false,
+///     output_dir: Some(String::from("/tmp/output")),
+///     display_name: String::from("my-script"),
+/// };
+/// // Runs the "build" script of the "example-project" with two arguments.
+/// crate::cli::project::run_project_with_options("example-project", "build", &vec![String::from("arg1"), String::from("arg2")], options).await?;
+/// # Ok(()) }
+/// ```
 async fn run_project_with_options(
     project: &str,
     script: &str,
@@ -511,6 +666,29 @@ async fn run_project_with_options(
     Ok(())
 }
 
+/// Prints detailed information about a registered project to standard output.
+///
+/// The output includes project name, version, path, optional base image,
+/// runtime configuration (GPU, memory, CPUs, workdir), available scripts,
+/// and configured GIS tools.
+///
+/// # Arguments
+///
+/// * `project` - The name of a registered project as stored in the user's settings.
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success. Returns an error if loading settings fails,
+/// the named project is not registered, or the project's `geoengine.yaml` cannot be read.
+///
+/// # Examples
+///
+/// ```
+/// # tokio_test::block_on(async {
+/// // Prints information for the project named "my-project"
+/// let _ = geoengine_cli::cli::project::show_project("my-project").await;
+/// # });
+/// ```
 async fn show_project(project: &str) -> Result<()> {
     let settings = Settings::load()?;
     let project_path = settings.get_project_path(project)?;
@@ -611,6 +789,22 @@ struct OutputFileInfo {
 // project tools <project>
 // ---------------------------------------------------------------------------
 
+/// Lists the GIS tools declared in a project's `geoengine.yaml` and prints them as JSON.
+///
+/// Loads the project's configuration, extracts each tool's metadata (name, label, description)
+/// and its inputs/outputs (including parameter name, label, mapping, type, required flag,
+/// default, description, and choices), then serializes the resulting array to stdout.
+///
+/// # Examples
+///
+/// ```
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     // Prints a JSON array of tools for the project named "my-project".
+///     list_tools("my-project").await?;
+///     Ok(())
+/// }
+/// ```
 async fn list_tools(project: &str) -> Result<()> {
     let settings = Settings::load()?;
     let project_path = settings.get_project_path(project)?;
@@ -670,6 +864,35 @@ async fn list_tools(project: &str) -> Result<()> {
 // project run-tool <project> <tool> --input KEY=VALUE ... [--output-dir PATH] [--json]
 // ---------------------------------------------------------------------------
 
+/// Executes a GIS tool defined in a project's configuration by mapping provided KEY=VALUE
+/// inputs to the tool's script, mounting any file or directory inputs into the container,
+/// optionally mounting an output directory at `/output` and setting `GEOENGINE_OUTPUT_DIR`,
+/// and running the tool's script inside the project's runtime container.
+///
+/// The function:
+/// - Loads the project configuration and locates the named tool.
+/// - Parses `input_args` items of the form `KEY=VALUE`.
+/// - For each input value that is an existing file or directory, mounts it read-only into the container
+///   (`/inputs/<filename>` for files, `/mnt/input_N` for directories) and replaces the value with the
+///   corresponding container path.
+/// - Maps input names to command flags using each tool input's `map_to` (or the input name if absent)
+///   and constructs script arguments as `--<flag> <value>`.
+/// - If `output_dir` is provided, ensures it exists, mounts it at `/output`, and sets
+///   `GEOENGINE_OUTPUT_DIR=/output` in the container environment.
+/// - Applies extra mounts and environment variables and executes the tool script with the constructed arguments.
+///
+/// Returns `Ok(())` on successful execution, or an error with context on failure.
+///
+/// # Examples
+///
+/// ```
+/// // Run the tool `convert` in project `myproj` with two inputs and capture output into ./out
+/// # tokio::runtime::Runtime::new().unwrap().block_on(async {
+/// let args = vec!["input1=file1.tif".to_string(), "threshold=0.5".to_string()];
+/// run_tool("myproj", "convert", &args, Some("./out"), false).await?;
+/// # Result::<(), anyhow::Error>::Ok(())
+/// # }).unwrap();
+/// ```
 async fn run_tool(
     project: &str,
     tool_name: &str,
@@ -788,7 +1011,27 @@ async fn run_tool(
     run_project_with_options(project, &tool.script, &script_args, options).await
 }
 
-/// Shell-escape a string for safe inclusion in a shell command
+/// Produces a shell-escaped string safe for inclusion in a POSIX shell command.
+///
+/// The returned string is single-quoted if it contains characters that would be
+/// interpreted by the shell; embedded single quotes are escaped so the resulting
+/// value is a valid single-quoted shell token.
+///
+/// # Parameters
+///
+/// - `s`: input string to escape.
+///
+/// # Returns
+///
+/// A `String` containing the escaped representation suitable for use in a shell command.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(shell_escape("simple"), "simple");
+/// assert_eq!(shell_escape("has space"), "'has space'");
+/// assert_eq!(shell_escape("a'b"), "'a'\\''b'");
+/// ```
 fn shell_escape(s: &str) -> String {
     // If the string contains special characters, wrap in single quotes
     // and escape any single quotes within
@@ -799,6 +1042,24 @@ fn shell_escape(s: &str) -> String {
     }
 }
 
+/// Collects regular files in `output_dir` and returns their metadata.
+///
+/// If `output_dir` is `None` or cannot be read, an empty vector is returned.
+/// Non-file entries and entries that fail to be read are ignored.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs::File;
+/// use tempfile::tempdir;
+///
+/// let dir = tempdir().unwrap();
+/// let file_path = dir.path().join("out.txt");
+/// File::create(&file_path).unwrap();
+///
+/// let files = crate::cli::project::collect_output_files(Some(dir.path().to_string_lossy().as_ref()));
+/// assert!(files.iter().any(|f| f.name == "out.txt"));
+/// ```
 fn collect_output_files(output_dir: Option<&str>) -> Vec<OutputFileInfo> {
     let Some(dir) = output_dir else {
         return Vec::new();
