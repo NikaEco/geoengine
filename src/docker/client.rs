@@ -211,7 +211,38 @@ impl DockerClient {
         Ok(())
     }
 
-    /// Build a Docker image
+    /// Builds a Docker image from a build context and Dockerfile, tagging the resulting image.
+    ///
+    /// Builds an image using the files in `context` and the Dockerfile at `dockerfile`, applies `build_args`,
+    /// optionally disables the build cache when `no_cache` is true, and tags the finished image with `tag`.
+    ///
+    /// # Parameters
+    ///
+    /// - `dockerfile`: Path to the Dockerfile (may be inside `context`).
+    /// - `context`: Directory containing the build context to be sent to the Docker daemon.
+    /// - `tag`: Image reference to assign to the built image (e.g., "repo:tag").
+    /// - `build_args`: Build-time variables passed to the Docker build.
+    /// - `no_cache`: When `true`, the build does not use cache.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the image was built and tagged successfully, `Err` if the build failed or an I/O/communication error occurred.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// use std::collections::HashMap;
+    /// use std::path::PathBuf;
+    /// // Assume `client` is a ready DockerClient connected to the daemon.
+    /// let client: crate::docker::client::DockerClient = unimplemented!();
+    /// let dockerfile = PathBuf::from("path/to/Dockerfile");
+    /// let context = PathBuf::from("path/to/context");
+    /// let mut build_args = HashMap::new();
+    /// build_args.insert("VERSION".to_string(), "1.0".to_string());
+    /// client.build_image(&dockerfile, &context, "myimage:latest", &build_args, false).await.unwrap();
+    /// # });
+    /// ```
     pub async fn build_image(
         &self,
         dockerfile: &PathBuf,
@@ -275,7 +306,26 @@ impl DockerClient {
         Ok(())
     }
 
-    /// Run a container and wait for it to complete (attached mode)
+    /// Runs a container in attached mode, streams its stdout and stderr to the host stdout, waits for the container to finish, and optionally removes it after exit.
+    ///
+    /// The method creates and starts the container described by `config`, follows its logs until the container stops, and returns the container's exit code.
+    ///
+    /// # Returns
+    ///
+    /// The container's exit code, or `-1` if waiting for the container failed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// let client = DockerClient::new().await?;
+    /// let config = ContainerConfig::default(); // populate required fields (image, cmd, etc.) as needed
+    /// let exit_code = client.run_container_attached(&config).await?;
+    /// println!("Container exited with code {}", exit_code);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn run_container_attached(&self, config: &ContainerConfig) -> Result<i64> {
         let container_id = self.create_container(config).await?;
 
@@ -341,8 +391,25 @@ impl DockerClient {
         Ok(exit_code)
     }
 
-    /// Run a container attached, routing all container output to host stderr.
-    /// This keeps host stdout free for structured output (e.g. JSON results).
+    /// Runs a container attached and forwards all container output to the host's stderr.
+    ///
+    /// Streams both stdout and stderr from the container to the process's stderr, waits for the
+    /// container to stop, and removes the container if `config.remove_on_exit` is true.
+    ///
+    /// # Returns
+    /// `exit_code` — the container's exit code, or `-1` if waiting for the container failed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use crate::docker::client::{DockerClient, ContainerConfig};
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let client = DockerClient::new().await?;
+    /// let config = ContainerConfig { /* configure image, cmd, etc. */ ..Default::default() };
+    /// let exit = client.run_container_attached_to_stderr(&config).await?;
+    /// println!("container exited with code {}", exit);
+    /// # Ok(()) }
+    /// ```
     pub async fn run_container_attached_to_stderr(&self, config: &ContainerConfig) -> Result<i64> {
         let container_id = self.create_container(config).await?;
 
@@ -408,7 +475,25 @@ impl DockerClient {
         Ok(exit_code)
     }
 
-    /// Run a container in detached mode
+    /// Starts a container from the provided configuration and returns its container ID.
+    ///
+    /// Returns the created container ID.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use crate::docker::DockerClient;
+    /// # use crate::docker::ContainerConfig;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// let client = DockerClient::new().await?;
+    /// let config = ContainerConfig {
+    ///     image: "alpine:latest".into(),
+    ///     ..Default::default()
+    /// };
+    /// let id = client.run_container_detached(&config).await?;
+    /// println!("Started container {}", id);
+    /// # Ok(()) }
+    /// ```
     pub async fn run_container_detached(&self, config: &ContainerConfig) -> Result<String> {
         let container_id = self.create_container(config).await?;
 

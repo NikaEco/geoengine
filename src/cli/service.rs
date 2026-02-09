@@ -442,6 +442,28 @@ fn find_qgis_plugin_dir() -> Result<PathBuf> {
     Ok(plugin_dir)
 }
 
+/// Writes the embedded ArcGIS toolbox and client Python files into the given directory.
+///
+/// Creates `GeoEngineTools.pyt` and `geoengine_client.py` inside `dir` using the embedded
+/// resources compiled into the binary. Returns `Ok(())` on success or an error if any file
+/// write operation fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::fs;
+/// use std::path::PathBuf;
+/// let tmp = tempfile::tempdir().unwrap();
+/// let dir = tmp.path().to_path_buf();
+/// write_arcgis_plugin(&dir).unwrap();
+/// assert!(dir.join("GeoEngineTools.pyt").exists());
+/// assert!(dir.join("geoengine_client.py").exists());
+/// // ensure contents match the embedded resources
+/// let expected_toolbox = include_str!("../../plugins/arcgis-ge/GeoEngineTools.pyt");
+/// let expected_client = include_str!("../../plugins/arcgis-ge/geoengine_client.py");
+/// assert_eq!(fs::read_to_string(dir.join("GeoEngineTools.pyt")).unwrap(), expected_toolbox);
+/// assert_eq!(fs::read_to_string(dir.join("geoengine_client.py")).unwrap(), expected_client);
+/// ```
 fn write_arcgis_plugin(dir: &PathBuf) -> Result<()> {
     // Write the Python toolbox
     let toolbox_content = include_str!("../../plugins/arcgis-ge/GeoEngineTools.pyt");
@@ -453,6 +475,37 @@ fn write_arcgis_plugin(dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Writes the QGIS plugin files required by GeoEngine into the specified directory.
+///
+/// The function writes `__init__.py`, `geoengine_plugin.py`, `geoengine_provider.py`,
+/// and `metadata.txt` from the embedded plugin resources into `dir`.
+///
+/// # Arguments
+///
+/// * `dir` - Destination directory where the plugin files will be created.
+///
+/// # Returns
+///
+/// `Ok(())` if all files were written successfully, otherwise an `Err` containing the I/O error.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use tempfile::tempdir;
+///
+/// let td = tempdir().unwrap();
+/// let plugin_dir: PathBuf = td.path().join("geoengine_qgis");
+/// std::fs::create_dir_all(&plugin_dir).unwrap();
+///
+/// // write_qgis_plugin is expected to be in scope
+/// write_qgis_plugin(&plugin_dir).unwrap();
+///
+/// assert!(plugin_dir.join("__init__.py").exists());
+/// assert!(plugin_dir.join("geoengine_plugin.py").exists());
+/// assert!(plugin_dir.join("geoengine_provider.py").exists());
+/// assert!(plugin_dir.join("metadata.txt").exists());
+/// ```
 fn write_qgis_plugin(dir: &PathBuf) -> Result<()> {
     let init_content = include_str!("../../plugins/qgis-ge/__init__.py");
     std::fs::write(dir.join("__init__.py"), init_content)?;

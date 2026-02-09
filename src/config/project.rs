@@ -159,7 +159,22 @@ impl ProjectConfig {
         Ok(config)
     }
 
-    /// Create a template configuration for a new project
+    /// Create a ProjectConfig pre-populated with sensible defaults for a new project.
+    ///
+    /// The returned configuration uses `name` as the project name and includes common defaults:
+    /// version "1.0", a runtime base image, a simple Docker build configuration (./Dockerfile),
+    /// a runtime with GPU enabled, memory and CPU defaults, example mounts and environment variables,
+    /// sample scripts (`default`, `train`, `process`), a single example GIS tool with required raster
+    /// input/output parameters, and placeholder deploy settings for GCP.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cfg = ProjectConfig::template("my-project");
+    /// assert_eq!(cfg.name, "my-project");
+    /// assert_eq!(cfg.version.as_deref(), Some("1.0"));
+    /// assert!(cfg.scripts.as_ref().and_then(|s| s.get("default")).is_some());
+    /// ```
     pub fn template(name: &str) -> Self {
         let mut scripts = HashMap::new();
         scripts.insert("default".to_string(), "python main.py".to_string());
