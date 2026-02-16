@@ -1,36 +1,45 @@
 use regex::Regex;
 use semver::Version;
 use std::cmp::Ordering;
+use std::sync::OnceLock;
 use crate::docker::client::DockerClient;
 
 pub async fn get_latest_worker_version(worker_name: &str, client: &DockerClient) -> Option<String> {
-    client.list_images(
-            Some(&format!("geoengine-local/{}", worker_name)),
-            true
-        )
+    let images = client
+        .list_images(Some(&format!("geoengine-local/{}", worker_name)), true)
         .await
-        .unwrap()
+        .ok()?;
+    let prefix = format!("geoengine-local/{}:", worker_name);
+
+    images
         .into_iter()
-        .map(|i| {
-            i.repo_tags
-                .iter()
-                .filter(|t| t.starts_with(&format!("geoengine-local/{}", worker_name)))
-                .map(|v| {
-                v.split(':').last().unwrap().to_string()
-            }).collect::<Vec<String>>()
+        .flat_map(|image| image.repo_tags.into_iter())
+        .filter_map(|tag| {
+            if !tag.starts_with(&prefix) {
+                return None;
+            }
+            let (_, version_str) = tag.rsplit_once(':')?;
+            let parsed = Version::parse(version_str).ok()?;
+            Some((parsed, version_str.to_string()))
         })
-        .flatten()
-        .max()
+        .max_by(|(a, _), (b, _)| a.cmp(b))
+        .map(|(_, version_str)| version_str)
 }
 
 pub async fn get_latest_worker_version_clientless(worker_name: &str) -> Option<String> {
-    let client = DockerClient::new().await.unwrap();
+    let client = DockerClient::new().await.ok()?;
     get_latest_worker_version(worker_name, &client).await
 }
 
+fn semver_regex() -> &'static Regex {
+    static SEMVER_RE: OnceLock<Regex> = OnceLock::new();
+    SEMVER_RE.get_or_init(|| {
+        Regex::new(r"^\d+\.\d+\.\d+$").expect("SEMVER_RE regex must compile")
+    })
+}
+
 pub fn validate_version(version: &str) -> Result<(), String> {
-    let valid = Regex::new(r"^(\d+\.)?(\d+\.)?(\*|\d+)$").unwrap();
-    if !valid.is_match(version) {
+    if !semver_regex().is_match(version) {
         Err(format!("Invalid version '{}'. Version numbers should follow semantic versioning.", version))
     } else {
         Ok(())
@@ -46,7 +55,7 @@ pub fn compare_versions(v1: &str, v2: &str) -> Result<Ordering, String> {
     };
     let ver2 = match Version::parse(v2) {
         Ok(v) => v,
-        Err(_) => return Err(format!("Invalid version '{}'. Please ensure your version number follows 'MAJOR.MINOR.PATCH'.", v1))
+        Err(_) => return Err(format!("Invalid version '{}'. Please ensure your version number follows 'MAJOR.MINOR.PATCH'.", v2))
     };
     Ok(ver1.cmp(&ver2))
 }

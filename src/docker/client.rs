@@ -288,7 +288,12 @@ impl DockerClient {
             .start_container(&container_id, None::<StartContainerOptions<String>>)
             .await?;
         
-        println!("Container command: {}", config.command.clone().unwrap().join(" "));
+        let command_display = config
+            .command
+            .as_ref()
+            .map(|cmd| cmd.join(" "))
+            .unwrap_or_else(|| "<none>".to_string());
+        println!("Container command: {}", command_display);
 
         // Stream logs
         let log_options = LogsOptions::<String> {

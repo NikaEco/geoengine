@@ -55,7 +55,7 @@ class GeoEngineClient:
     def list_workers(self) -> List[Dict]:
         """List all registered workers."""
         result = subprocess.run(
-            [self.binary, 'workers', '--json'],
+            [self.binary, 'workers', '--json', '--gis', 'arcgis'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
@@ -127,12 +127,21 @@ class GeoEngineClient:
             if process.returncode == 0 and stdout_data.strip():
                 return json.loads(stdout_data)
             elif process.returncode != 0:
+                error_detail: Any = stdout_data.strip() or f"exit code {process.returncode}"
                 if stdout_data.strip():
                     try:
-                        return json.loads(stdout_data)
+                        parsed = json.loads(stdout_data)
+                        if isinstance(parsed, dict):
+                            error_detail = (
+                                parsed.get("error")
+                                or parsed.get("detail")
+                                or parsed
+                            )
+                        else:
+                            error_detail = parsed
                     except json.JSONDecodeError:
-                        pass
-                raise Exception(f"Tool exited with code {process.returncode}")
+                        error_detail = stdout_data.strip()
+                raise Exception(f"GeoEngine tool failed: {error_detail}")
             else:
                 return {'status': 'completed', 'exit_code': 0, 'files': []}
         finally:

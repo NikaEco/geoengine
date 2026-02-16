@@ -203,44 +203,73 @@ def save_geotiff_from_pil(
         dst.write(arr)
 
 
-def convert_one(src: Path, dst: Path, opts: Options) -> Tuple[bool, str]:
-    if dst.exists() and not opts.overwrite:
-        return False, "Skipped (exists)"
-
-    to_key = opts.to.lower()
+def _convert_image(
+    src_path: Path,
+    dst_path: Path,
+    to_key: str,
+    compress: str,
+    max_size: Optional[int],
+    quality: int,
+) -> Tuple[bool, str]:
     out_ext, out_fmt = TARGETS[to_key]
-
-    src_ext = src.suffix.lower()
+    src_ext = src_path.suffix.lower()
 
     try:
         # If target is TIFF/GeoTIFF -> write via rasterio to support geotags if possible
         if out_ext in (".tif", ".tiff") or out_fmt == "GTiff":
-            driver = "GTiff" if to_key in ("geotiff", "gtiff") else "GTiff"  # use GTiff writer
+            # GTiff is used for both tif/tiff and geotiff output paths.
+            driver = "GTiff"
             if src_ext in TIFF_EXTS:
-                save_geotiff_from_raster(src, dst, driver=driver, compress=opts.compress, max_size=opts.max_size)
+                save_geotiff_from_raster(
+                    src_path,
+                    dst_path,
+                    driver=driver,
+                    compress=compress,
+                    max_size=max_size,
+                )
             else:
-                with Image.open(src) as im:
-                    save_geotiff_from_pil(im, dst, driver=driver, compress=opts.compress, max_size=opts.max_size)
+                with Image.open(src_path) as im:
+                    save_geotiff_from_pil(
+                        im,
+                        dst_path,
+                        driver=driver,
+                        compress=compress,
+                        max_size=max_size,
+                    )
             return True, "OK"
 
         # If source is TIFF/GeoTIFF but target is non-TIFF -> read via rasterio then write via Pillow
         if src_ext in TIFF_EXTS:
-            with rasterio.open(src) as ds:
+            with rasterio.open(src_path) as ds:
                 im = rasterio_to_pil(ds)
-            im = resize_pil(im, opts.max_size)
-            save_pil(im, dst, to_key, opts.quality)
+            im = resize_pil(im, max_size)
+            save_pil(im, dst_path, to_key, quality)
             return True, "OK"
 
         # Everything else -> Pillow roundtrip
-        with Image.open(src) as im:
-            im = resize_pil(im, opts.max_size)
-            save_pil(im, dst, to_key, opts.quality)
+        with Image.open(src_path) as im:
+            im = resize_pil(im, max_size)
+            save_pil(im, dst_path, to_key, quality)
         return True, "OK"
 
     except UnidentifiedImageError:
         return False, "Failed (unrecognized image)"
     except Exception as e:
         return False, f"Failed ({type(e).__name__}: {e})"
+
+
+def convert_one(src: Path, dst: Path, opts: Options) -> Tuple[bool, str]:
+    if dst.exists() and not opts.overwrite:
+        return False, "Skipped (exists)"
+
+    return _convert_image(
+        src_path=src,
+        dst_path=dst,
+        to_key=opts.to.lower(),
+        compress=opts.compress,
+        max_size=opts.max_size,
+        quality=opts.quality,
+    )
 
 def convert_one_direct(src: Path,
                        dst: Path,
@@ -248,48 +277,20 @@ def convert_one_direct(src: Path,
                        overwrite: bool = True,
                        compress: str = "deflate",
                        max_size: int = None,
-                       quality: int = 92,
-                       test: str = "hi") -> Tuple[bool, str]:
-    print(test)
+                       quality: int = 92) -> Tuple[bool, str]:
     src_path = Path(src)
     dst_path = Path(dst)
     if dst_path.exists() and not overwrite:
         return False, "Skipped (exists)"
 
-    to_key = to.lower()
-    out_ext, out_fmt = TARGETS[to_key]
-
-    src_ext = src_path.suffix.lower()
-
-    try:
-        # If target is TIFF/GeoTIFF -> write via rasterio to support geotags if possible
-        if out_ext in (".tif", ".tiff") or out_fmt == "GTiff":
-            driver = "GTiff" if to_key in ("geotiff", "gtiff") else "GTiff"  # use GTiff writer
-            if src_ext in TIFF_EXTS:
-                save_geotiff_from_raster(src_path, dst_path, driver=driver, compress=compress, max_size=max_size)
-            else:
-                with Image.open(src) as im:
-                    save_geotiff_from_pil(im, dst_path, driver=driver, compress=compress, max_size=max_size)
-            return True, "OK"
-
-        # If source is TIFF/GeoTIFF but target is non-TIFF -> read via rasterio then write via Pillow
-        if src_ext in TIFF_EXTS:
-            with rasterio.open(src) as ds:
-                im = rasterio_to_pil(ds)
-            im = resize_pil(im, max_size)
-            save_pil(im, dst_path, to_key, quality)
-            return True, "OK"
-
-        # Everything else -> Pillow roundtrip
-        with Image.open(src) as im:
-            im = resize_pil(im, max_size)
-            save_pil(im, dst_path, to_key, quality)
-        return True, "OK"
-
-    except UnidentifiedImageError:
-        return False, "Failed (unrecognized image)"
-    except Exception as e:
-        return False, f"Failed ({type(e).__name__}: {e})"
+    return _convert_image(
+        src_path=src_path,
+        dst_path=dst_path,
+        to_key=to.lower(),
+        compress=compress,
+        max_size=max_size,
+        quality=quality,
+    )
 
 
 def run_batch(opts: Options) -> int:

@@ -133,7 +133,9 @@ class Toolbox:
                             messages.addMessage(f"  {f['name']} ({f.get('size', 0)} bytes)")
 
                 except Exception as e:
-                    messages.addErrorMessage(f"Error executing tool: {e}")
+                    error_message = f"Error executing tool: {e}"
+                    messages.addErrorMessage(error_message)
+                    raise arcpy.ExecuteError(error_message) from e
 
             def postExecute(self, parameters):
                 return

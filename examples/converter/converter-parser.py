@@ -36,14 +36,13 @@ def main():
     parser.add_argument('--compress', dest='compress', type=str, default="deflate", help="Auto-generated for 'compress'")
     parser.add_argument('--max-size', dest='max_size', type=int, help="Auto-generated for 'max_size'")
     parser.add_argument('--quality', dest='quality', type=int, default=92, help="Auto-generated for 'quality'")
-    parser.add_argument('--test', dest='test', type=str, default="hi", help="Auto-generated for 'test'")
     args = parser.parse_args()
     output_dir = Path(os.environ.get("GEOENGINE_OUTPUT_DIR", "tool-parsers")).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     output_target = str(output_dir / f"{uuid.uuid4().hex}.txt")
 
     fn = load_function(PY_FILE, FUNCTION)
-    result = fn(src=args.src, dst=output_target, to=args.to, overwrite=args.overwrite, compress=args.compress, max_size=args.max_size, quality=args.quality, test=args.test)
+    result = fn(src=args.src, dst=output_target, to=args.to, overwrite=args.overwrite, compress=args.compress, max_size=args.max_size, quality=args.quality)
 
     try:
         print(json.dumps(result))

@@ -109,14 +109,14 @@ async fn list_images(client: &DockerClient, filter: Option<&str>, all: bool) -> 
     );
     println!("{}", "-".repeat(100));
 
-    for image in images.clone() {
+    for image in &images {
         let repo_tag = image
             .repo_tags
             .iter()
             .filter(|t| !t.starts_with("geoengine-local-dev/"))
             .map(|s| s.as_str())
             .collect::<Vec<&str>>();
-        let id = &image.id[7..19]; // Short ID
+        let id = short_image_id(&image.id);
         let size = format_size(image.size);
         let created = format_timestamp(image.created);
 
@@ -139,14 +139,14 @@ async fn list_images(client: &DockerClient, filter: Option<&str>, all: bool) -> 
     );
     println!("{}", "-".repeat(100));
 
-    for image in images {
+    for image in &images {
         let repo_tag = image
             .repo_tags
             .iter()
             .filter(|t| t.starts_with("geoengine-local-dev/"))
             .map(|s| s.as_str())
             .collect::<Vec<&str>>();
-        let id = &image.id[7..19]; // Short ID
+        let id = short_image_id(&image.id);
         let size = format_size(image.size);
         let created = format_timestamp(image.created);
 
@@ -196,4 +196,14 @@ fn format_timestamp(timestamp: i64) -> String {
     let dt = DateTime::<Utc>::from_timestamp(timestamp, 0);
     dt.map(|d| d.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| "Unknown".to_string())
+}
+
+fn short_image_id(image_id: &str) -> String {
+    let trimmed = image_id.strip_prefix("sha256:").unwrap_or(image_id);
+    let short: String = trimmed.chars().take(12).collect();
+    if short.is_empty() {
+        "<none>".to_string()
+    } else {
+        short
+    }
 }

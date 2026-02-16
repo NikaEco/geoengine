@@ -102,8 +102,13 @@ pub async fn init_worker(name: Option<&str>) -> Result<()> {
 
     let mut template = WorkerConfig::template(&worker_name);
 
-    get_dockerfile_config(&current_dir, &mut template)
-        .expect("Dockerfile not found, skipping discovery step...");
+    if let Err(e) = get_dockerfile_config(&current_dir, &mut template) {
+        println!(
+            "{} Dockerfile discovery skipped: {}",
+            "!".yellow().bold(),
+            e
+        );
+    }
 
     let yaml = serde_yaml::to_string(&template)?;
 
@@ -474,7 +479,7 @@ pub async fn apply_worker(worker: Option<&str>, _force: bool) -> Result<()> {
                         },
                         Err(e) => {
                             res_arcgis = false;
-                            yaml_content = yaml_content.replace("arcgis: true", "arcgis: false");
+                            set_plugin_flag_in_yaml(&mut yaml_content, "arcgis", false)?;
                             plugin_change_msgs.push(format!("{} {}",
                                 "×".red(),
                                 format!("ArcGIS plugin NOT installed: {}.", e).to_string()
@@ -488,7 +493,7 @@ pub async fn apply_worker(worker: Option<&str>, _force: bool) -> Result<()> {
                 }
                 _ => {
                     res_arcgis = false;
-                    yaml_content = yaml_content.replace("arcgis: true", "arcgis: false");
+                    set_plugin_flag_in_yaml(&mut yaml_content, "arcgis", false)?;
                     plugin_change_msgs.push(format!("{} {}",
                         "×".red(),
                         "ArcGIS plugin installation rejected.".to_string()
@@ -508,7 +513,7 @@ pub async fn apply_worker(worker: Option<&str>, _force: bool) -> Result<()> {
     }
 
     if cur_qgis != prev_qgis {
-        if cur_qgis {
+        if cur_qgis && !verify_qgis_plugin_installed()? {
             let install_qgis = Select::with_theme(&ColorfulTheme::default())
                 .with_prompt("QGIS plugin is not installed yet. Would you like to do so?")
                 .items(&["Yes", "No"])
@@ -531,7 +536,7 @@ pub async fn apply_worker(worker: Option<&str>, _force: bool) -> Result<()> {
                         },
                         Err(e) => {
                             res_qgis = false;
-                            yaml_content = yaml_content.replace("qgis: true", "qgis: false");
+                            set_plugin_flag_in_yaml(&mut yaml_content, "qgis", false)?;
                             plugin_change_msgs.push(format!("{} {}",
                                 "×".red(),
                                 format!("QGIS plugin NOT installed: {}.", e).to_string()
@@ -545,7 +550,7 @@ pub async fn apply_worker(worker: Option<&str>, _force: bool) -> Result<()> {
                 }
                 _ => {
                     res_qgis = false;
-                    yaml_content = yaml_content.replace("qgis: true", "qgis: false");
+                    set_plugin_flag_in_yaml(&mut yaml_content, "qgis", false)?;
                     plugin_change_msgs.push(format!("{} {}",
                         "×".red(),
                         "QGIS plugin NOT installed. Tool not registered.".to_string()
@@ -852,7 +857,7 @@ pub async fn run_worker(
     }
 
     if exit_code != 0 {
-        std::process::exit(exit_code as i32);
+        anyhow::bail!("Worker '{}' exited with code {}", worker_name, exit_code);
     }
 
     Ok(())
@@ -992,11 +997,8 @@ pub async fn describe_worker(worker: Option<&str>, json: bool) -> Result<()> {
             .max(11);
         let def_w = desc.inputs.iter()
             .map(|t| {
-                t.default.clone()
-                    .unwrap_or(serde_yaml::Value::from(""))
-                    .as_str()
-                    .unwrap()
-                    .len()
+                let default = t.default.clone().unwrap_or(serde_yaml::Value::from(""));
+                yaml_value_to_display_string(&default).len()
             })
             .max()
             .unwrap_or(7)
@@ -1045,11 +1047,8 @@ pub async fn describe_worker(worker: Option<&str>, json: bool) -> Result<()> {
         // Print rows
         for t in desc.inputs {
             let description = t.description.as_deref().unwrap_or("-");
-            let default = t.default.clone()
-                .unwrap_or(serde_yaml::Value::from(""));
-            let default_str = default
-                .as_str()
-                .unwrap();
+            let default = t.default.clone().unwrap_or(serde_yaml::Value::from(""));
+            let default_str = yaml_value_to_display_string(&default);
             let enum_str = t
                 .enum_values
                 .as_ref()
@@ -1062,7 +1061,7 @@ pub async fn describe_worker(worker: Option<&str>, json: bool) -> Result<()> {
                 t.param_type,
                 if t.required { "Yes" } else { "No" },
                 description,
-                default_str,
+                &default_str,
                 enum_str,
                 name_w = name_w,
                 type_w = type_w,
@@ -1101,16 +1100,15 @@ pub async fn list_workers(json: bool, gis: Option<String>) -> Result<()> {
         let mut entries: Vec<WorkerListEntry> = Vec::new();
         for (name, path) in &workers {
             let (has_tool, description, is_registered) = match yaml_store::load_saved_config(name) {
-                Ok(config) => (
-                    config.command.is_some(),
-                    config.description,
-                    match choice {
+                Ok(config) => {
+                    let is_registered = match choice {
                         0 => None,
-                        1 => config.plugins.unwrap().arcgis,
-                        2 => config.plugins.unwrap().qgis,
+                        1 => config.plugins.as_ref().and_then(|p| p.arcgis),
+                        2 => config.plugins.as_ref().and_then(|p| p.qgis),
                         _ => unreachable!(),
-                    }
-                ),
+                    };
+                    (config.command.is_some(), config.description, is_registered)
+                },
                 Err(_) => (false, None, None),
             };
             match is_registered {
@@ -1409,6 +1407,38 @@ fn touch_qgis_refresh_trigger() {
         let trigger = home.join(".geoengine").join(".qgis_refresh");
         // Write current timestamp so the file content actually changes
         let _ = std::fs::write(&trigger, chrono::Utc::now().to_rfc3339());
+    }
+}
+
+fn set_plugin_flag_in_yaml(yaml_content: &mut String, plugin_key: &str, enabled: bool) -> Result<()> {
+    let mut yaml_value: serde_yaml::Value = serde_yaml::from_str(yaml_content)
+        .context("Failed to parse geoengine.yaml while updating plugin status")?;
+
+    let root = yaml_value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("Expected top-level mapping in geoengine.yaml"))?;
+    let plugins_key = serde_yaml::Value::String("plugins".to_string());
+    let plugin_entry_key = serde_yaml::Value::String(plugin_key.to_string());
+    let plugins_value = root
+        .entry(plugins_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let plugins_map = plugins_value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("Expected 'plugins' to be a mapping in geoengine.yaml"))?;
+    plugins_map.insert(plugin_entry_key, serde_yaml::Value::Bool(enabled));
+
+    *yaml_content = serde_yaml::to_string(&yaml_value)
+        .context("Failed to serialize geoengine.yaml after updating plugin status")?;
+    Ok(())
+}
+
+fn yaml_value_to_display_string(value: &serde_yaml::Value) -> String {
+    match value {
+        serde_yaml::Value::Null => String::new(),
+        serde_yaml::Value::Bool(v) => v.to_string(),
+        serde_yaml::Value::Number(v) => v.to_string(),
+        serde_yaml::Value::String(v) => v.clone(),
+        _ => serde_json::to_string(value).unwrap_or_else(|_| String::new()),
     }
 }
 
