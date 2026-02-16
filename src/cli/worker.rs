@@ -708,23 +708,29 @@ pub async fn run_worker(
     // Build extra mounts from input values that are file/folder paths
     let mut extra_mounts: Vec<(String, String, bool)> = Vec::new();
     let mut input_counter = 0usize;
+    let mut output_counter = 0usize;
 
     // Build script arguments from inputs
     let mut script_args: Vec<String> = Vec::new();
     for (key, value) in &inputs {
         // Check if the value is a file or directory path that needs mounting
         let path = Path::new(value);
+        let is_output = is_output_like_input_key(key);
         let processed_value = if path.exists() {
             if path.is_file() {
                 if let Some(filename) = path.file_name() {
                     let abs_path = path
                         .canonicalize()
                         .with_context(|| format!("Failed to resolve input path: {}", value))?;
-                    let container_path = format!("/inputs/{}/{}", key, filename.to_string_lossy());
+                    let container_path = if is_output {
+                        format!("/outputs/{}/{}", key, filename.to_string_lossy())
+                    } else {
+                        format!("/inputs/{}/{}", key, filename.to_string_lossy())
+                    };
                     extra_mounts.push((
                         abs_path.to_string_lossy().to_string(),
                         container_path.clone(),
-                        true,
+                        !is_output,
                     ));
                     container_path
                 } else {
@@ -734,12 +740,19 @@ pub async fn run_worker(
                 let abs_path = path
                     .canonicalize()
                     .with_context(|| format!("Failed to resolve input directory: {}", value))?;
-                let container_path = format!("/mnt/input_{}", input_counter);
-                input_counter += 1;
+                let container_path = if is_output {
+                    let p = format!("/mnt/output_{}", output_counter);
+                    output_counter += 1;
+                    p
+                } else {
+                    let p = format!("/mnt/input_{}", input_counter);
+                    input_counter += 1;
+                    p
+                };
                 extra_mounts.push((
                     abs_path.to_string_lossy().to_string(),
                     container_path.clone(),
-                    true,
+                    !is_output,
                 ));
                 container_path
             } else {
@@ -1449,4 +1462,14 @@ fn shell_escape(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn is_output_like_input_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase().replace('-', "_");
+    normalized.contains("output")
+        || normalized == "out"
+        || normalized == "dst"
+        || normalized == "dest"
+        || normalized == "destination"
+        || normalized.starts_with("out_")
 }

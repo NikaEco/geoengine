@@ -5,11 +5,11 @@ command:
   program: python
   script: main.py
   inputs:
-  - name: input_file
-    type: file
+  - name: input-dir
+    type: folder
     required: true
-    description: Input file to process
-  - name: output_folder
+    description: Input folder to process
+  - name: output-dir
     type: folder
     required: true
     description: Output folder for results
