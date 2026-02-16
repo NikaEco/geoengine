@@ -7,8 +7,8 @@ Docker-based isolated runtime manager for geospatial workloads with GPU support 
 - **Isolated Execution**: Run Python/R scripts in Docker containers with GDAL, PyTorch, and other geospatial libraries
 - **GPU Support**: NVIDIA GPU passthrough for CUDA-accelerated processing
 - **GIS Integration**: Native plugins for ArcGIS Pro and QGIS -- tools run directly via the CLI, no proxy service required
-- **Air-gapped Support**: Import/export Docker images for systems without internet access
-- **Project Management**: YAML-based project configuration with named scripts and GIS tool definitions
+- **Air-gapped Support**: Import Docker images for systems without internet access
+- **Worker Management**: Declarative YAML configuration with `apply` for registration and plugin setup, `build` for smart image rebuilds
 - **Cloud Deployment**: Push images to GCP Artifact Registry
 
 ## Quick Start
@@ -44,84 +44,75 @@ irm https://raw.githubusercontent.com/NikaGeospatial/geoengine/main/install/inst
 
 ## Usage
 
-### Create a Project
+### Create and Apply a Worker
 
 ```bash
-# Initialize a new project
-geoengine project init --name my-geospatial-project
+# Initialize a new worker (creates geoengine.yaml template)
+# Name is optional, if not specified, the current directory name is used
+geoengine init --name my-worker
 
-# Edit geoengine.yaml to configure your project
-# Add your Dockerfile, scripts, and data
+# Edit geoengine.yaml to configure your worker
+# Add your Dockerfile and scripts
 
-# Register the project
-geoengine project register .
+# Apply: registers the worker if new, saves worker config, and prompts GIS plugin installation if not already installed
+geoengine apply
 
-# Build the Docker image
-geoengine project build my-geospatial-project
-
-# Run a script
-geoengine project run my-geospatial-project train
-
-# Run a script with arguments (requires trailing double dash)
-geoengine project run my-geospatial-project predict -- --input-raster /path/to/image.tif
+# Build: builds the Docker image (detects file changes and enforces versioning)
+geoengine build
 ```
 
-### Run GIS Tools from the CLI
+`geoengine apply` handles worker registration and GIS plugin management. It checks whether the worker is registered (and registers it if not) and applies any changes to the `plugins` section of `geoengine.yaml`.
+It saves the current configuration of the worker, and this saved configuration is used for `build` and `run`.
+Hence, please make sure to apply your changes **before** building or running a worker.
 
-GIS tools defined in `geoengine.yaml` can be run directly from the command line. Input parameters are passed as `--input KEY=VALUE` flags, and the CLI automatically maps them to script flags.
+`geoengine build` handles Docker image builds with smart change detection:
+- If build-related files (Dockerfile, geoengine.yaml build fields, command script) **and** the version number have both changed, the image is rebuilt.
+- If only the version changed but no files changed, the build is skipped with a notice.
+- If files changed but the version was not incremented, the build is rejected — bump the version in `geoengine.yaml` first (non-dev mode only).
+- Use `--no-cache` to bypass change detection and force a full rebuild.
+
+### Build a Docker Image
 
 ```bash
-# List tools available in a project
-geoengine project tools my-project
+# Build from the applied configuration
+geoengine build
 
-# Run a GIS tool with input parameters
-geoengine project run-tool my-project classify \
-  --input input_raster=/path/to/image.tif \
-  --input model_name=resnet50 \
-  --output-dir ./results
+# Build without cache (bypasses change detection)
+geoengine build --no-cache
 
-# Same command with JSON output (used by plugins)
-geoengine project run-tool my-project classify \
-  --input input_raster=/path/to/image.tif \
-  --output-dir ./results \
-  --json
+# Pass build arguments
+geoengine build --build-arg PYTHON_VERSION=3.11
+
+# Build as a dev image
+geoengine build --dev
 ```
 
-**How input mapping works:**
+### Run a Worker
 
-Each `--input KEY=VALUE` is converted to a script flag `--<flag_name> <value>`:
-- If the tool's input definition has a `map_to` field, that becomes the flag name
-- Otherwise, the input's `name` is used as the flag name
+Each worker defines a command in `geoengine.yaml`. Input parameters are passed as `--input KEY=VALUE` flags, which are forwarded to the container script as `--KEY VALUE` arguments.
+The command is run in the current directory by default. It runs the latest production image if `--dev` is not specified.
 
-For example, given this tool definition:
-```yaml
-gis:
-  tools:
-    - name: classify
-      script: predict
-      inputs:
-        - name: input_raster
-          type: raster
-          map_to: input-file    # Maps to --input-file
-        - name: model_name
-          type: string          # No map_to, so maps to --model_name
-```
-
-Running:
 ```bash
-geoengine project run-tool my-project classify \
-  --input input_raster=/data/image.tif \
-  --input model_name=resnet50
+# Run the worker defined in the current directory using latest production image
+geoengine run --input input_file=/path/to/image.tif --input model=resnet50
+
+# Run the latest dev image (built using `geoengine build --dev`)
+geoengine run --dev
+
+# Run a named worker using its latest production image
+geoengine run my-worker --input input_file=/path/to/image.tif
+
+# JSON output mode (logs go to stderr, structured result on stdout)
+geoengine run my-worker --json --input input_file=/path/to/image.tif
+
+# Pass extra arguments to the container command (after trailing --)
+geoengine run my-worker --input input_file=/data.tif -- --extra-flag value
 ```
 
-Executes the script as:
-```bash
-python predict.py --input-file /inputs/image.tif --model_name resnet50
-```
+**Input mapping (quick):**
 
-File/directory paths are automatically:
-- Mounted read-only into `/inputs/<filename>` (files) or `/mnt/input_N/` (directories)
-- Rewritten in the command line to use the container path
+- Each `--input KEY=VALUE` is forwarded as `--KEY VALUE` to the worker command.
+- If `VALUE` is an existing local file/folder path, GeoEngine auto-mounts it and rewrites the argument to the container path.
 
 When using `--json`, container logs stream to stderr and a structured JSON result is printed to stdout on completion:
 
@@ -129,26 +120,53 @@ When using `--json`, container logs stream to stderr and a structured JSON resul
 {
   "status": "completed",
   "exit_code": 0,
-  "output_dir": "/absolute/path/to/results",
-  "files": [
-    {"name": "result.tif", "path": "/absolute/path/to/results/result.tif", "size": 12345}
-  ]
+  "files": []
 }
 ```
+To note, the `files` array is currently empty, but this may change in the future.
 
-### Run Containers Directly
+**Advanced: input mapping details**
+
+- File inputs are mounted read-only at `/inputs/<key>/<filename>`.
+- Directory inputs are mounted read-only at `/mnt/input_N/`.
+- If an input value does not exist as a local path, it is passed through as a plain string value.
+
+### Check for Changes
 
 ```bash
-# Run a container with GPU and mounts
-geoengine run my-image:latest python train.py \
-  --gpu \
-  --mount ./data:/data \
-  --mount ./output:/output \
-  --env CUDA_VISIBLE_DEVICES=0 \
-  --memory 16g
+# Check all tracked files (geoengine.yaml, Dockerfile, command script)
+geoengine diff
 
-# Run interactively
-geoengine run -t ubuntu:latest bash
+# Check only the YAML configuration
+geoengine diff --file yaml
+
+# Check only the Dockerfile
+geoengine diff --file docker
+
+# Check only the command script (e.g. main.py)
+geoengine diff --file command
+```
+
+### Manage Workers
+
+```bash
+# List registered workers
+geoengine workers
+
+# List as JSON (for programmatic use)
+geoengine workers --json
+
+# List workers registered in ArcGIS plugin (for programmatic use)
+geoengine workers --gis arcgis
+
+# Describes a worker's name, version, and parameters (defaults to current directory if worker name is not specified)
+geoengine describe my-worker
+
+# Delete a worker (removes registration, saved config and state)
+geoengine delete --name my-worker
+
+# Delete the worker in the current directory
+geoengine delete
 ```
 
 ### Image Management
@@ -160,44 +178,8 @@ geoengine image list
 # Import from tarball (air-gapped)
 geoengine image import my-image.tar --tag my-image:latest
 
-# Export for transfer
-geoengine image export my-image:latest -o my-image.tar
-
-# Pull from registry
-geoengine image pull nvidia/cuda:12.0-base
-```
-
-### GIS Integration
-
-The QGIS and ArcGIS plugins invoke the `geoengine` CLI directly -- no proxy service is required. Install the plugins, and any registered project with GIS tools will appear automatically.
-
-```bash
-# Install the ArcGIS Pro plugin
-geoengine service register arcgis
-
-# Install the QGIS plugin
-geoengine service register qgis
-```
-
-The plugins will:
-1. Discover registered projects and their tools via `geoengine project list --json` and `geoengine project tools <name>`
-2. Present tools in the native Processing toolbox / Python Toolbox with typed parameters
-3. Execute tools via `geoengine project run-tool`, streaming real-time container output as progress messages
-4. Support cancellation (QGIS) by terminating the subprocess
-
-#### Legacy Proxy Service
-
-A proxy HTTP service is also available for advanced use cases (remote Docker hosts, shared job queues, web UIs):
-
-```bash
-# Start the proxy service
-geoengine service start
-
-# Check service status
-geoengine service status
-
-# View running jobs
-geoengine service jobs
+# Remove an image
+geoengine image remove my-image:latest
 ```
 
 ### Deploy to Cloud
@@ -213,69 +195,159 @@ geoengine deploy push my-image:latest \
   --repository geoengine
 ```
 
-### Example Project
-Example projects are available in the [examples](examples) directory. Feel free to try them out by `cd`-ing
-into the projects and register them as local geoengine projects.
-- [Simple Converter](examples/converter) - Takes input directory, converts files in it to specified format,
-  spits it out into output directory.
+### Example Workers
 
-## Project Configuration
+Example workers are available in the [examples](examples) directory. Feel free to try them out by `cd`-ing into the worker directories and running `geoengine apply` followed by `geoengine build`.
 
-Create a `geoengine.yaml` in your project directory:
+- [Simple Converter](examples/converter) - Takes an input directory, converts files to a specified format, and writes results to an output directory.
+
+## Versioning
+Workers are versioned using [Semantic Versioning](https://semver.org/). GeoEngine will enforce this when building images.
+The following situations will throw errors when attempting to rebuild.
+1. The version number in `geoengine.yaml` is missing.
+2. The version number in `geoengine.yaml` is lower than the current image version.
+3. The version number in `geoengine.yaml` is invalid.
+
+A valid SemVer version string must be of the form `MAJOR.MINOR.PATCH`, without missing any parameters.
+Ensure to follow versioning rules accordingly to avoid unexpected errors!
+
+
+## Worker Configuration
+
+Create a `geoengine.yaml` in your worker directory (or run `geoengine init` to generate a template):
 
 ```yaml
 name: land-cover-classifier
-version: "1.0"
+version: "1.0.0"
+description: "Deep learning-based land cover classification from satellite imagery"
 
-build:
-  dockerfile: ./Dockerfile
-  context: .
+command:
+  program: python
+  script: main.py
+  inputs:
+    - name: input_file
+      type: file
+      required: true
+      description: "Input satellite image to classify"
 
-runtime:
-  gpu: true
-  memory: "16g"
-  cpus: 4
-  shm_size: "2g"
+    - name: output_folder
+      type: folder
+      required: true
+      description: "Output folder for classification results"
 
-  mounts:
-    - host: ./data
-      container: /data
-    - host: ./output
-      container: /output
+    - name: model
+      type: enum
+      required: false
+      default: "resnet50"
+      description: "Classification model to use"
+      enum_values:
+        - resnet50
+        - efficientnet
+        - unet
 
-  environment:
-    CUDA_VISIBLE_DEVICES: "0"
-    PYTHONUNBUFFERED: "1"
+    - name: confidence
+      type: number
+      required: false
+      default: 0.75
+      description: "Minimum confidence threshold"
 
-  workdir: /workspace
+    - name: verbose
+      type: boolean
+      required: false
+      default: false
+      description: "Enable verbose output"
 
-scripts:
-  default: python main.py
-  train: python train.py --epochs 100
-  predict: python predict.py
+    - name: timestamp
+      type: datetime
+      required: false
+      description: "Acquisition date of the input imagery"
 
-# GIS tools (optional)
-gis:
-  tools:
-    - name: classify
-      label: "Land Cover Classification"
-      script: predict
-      inputs:
-        - name: input_raster
-          type: raster
-          label: "Input Image"
-      outputs:
-        - name: output_raster
-          type: raster
-          label: "Classification"
+local_dir_mounts:
+  - host_path: ./data
+    container_path: /data
+    readonly: false
+  - host_path: ./models
+    container_path: /models
+    readonly: true
+
+plugins:
+  arcgis: false
+  qgis: true
+
+deploy:
+  tenant_id: null
 ```
+
+### Configuration Reference
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | String | Yes | Worker name (used for image tagging and registration) |
+| `version` | String | No | Worker version |
+| `description` | String | No | Human-readable description |
+| `command` | Object | Yes | Container command configuration |
+| `local_dir_mounts` | Array | No | Persistent directory mounts |
+| `plugins` | Object | No | GIS plugin flags |
+| `deploy` | Object | No | Cloud deployment settings |
+
+### `command` Section
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `program` | String | Yes | Interpreter or binary (e.g., `python`, `Rscript`) |
+| `script` | String | Yes | Script to run (e.g., `main.py`) |
+| `inputs` | Array | No | Input parameter definitions |
+
+### `command.inputs[]` Items
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | String | Yes | -- | Parameter name (becomes `--name` flag) |
+| `type` | String | Yes | -- | Parameter type (see below) |
+| `required` | Boolean | No | `true` | Whether the parameter is required |
+| `default` | Any | No | `null` | Default value |
+| `description` | String | No | `null` | Help text |
+| `enum_values` | Array | No | `null` | Valid choices (for `enum` type) |
+
+**Supported Input Types:**
+
+| Type | Description |
+|------|-------------|
+| `file` | File path (mounted read-only into container) |
+| `folder` | Directory path (mounted read-only into container) |
+| `string` | Text value |
+| `number` | Numeric value |
+| `boolean` | Boolean value |
+| `enum` | Choice from `enum_values` list |
+| `datetime` | Date/time value |
+
+### `local_dir_mounts[]` Items
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `host_path` | String | Yes | -- | Host path (supports `./` for relative paths) |
+| `container_path` | String | Yes | -- | Path inside the container |
+| `readonly` | Boolean | No | `false` | Mount as read-only |
+
+### `plugins` Section
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `arcgis` | Boolean | `false` | Install ArcGIS Pro Python Toolbox plugin on `apply` |
+| `qgis` | Boolean | `false` | Install QGIS Processing plugin on `apply` |
+
+### `deploy` Section
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tenant_id` | String | `null` | Deployment tenant identifier |
 
 ## GIS Plugin Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐
 │   ArcGIS Pro    │     │      QGIS       │
-│   (Toolbox)     │     │    (Plugin)     │
+│   (Toolbox)     │     │   (Processing)  │
 └────────┬────────┘     └────────┬────────┘
          │                       │
          │   subprocess (CLI)    │
@@ -283,7 +355,7 @@ gis:
                     │
          ┌──────────▼──────────┐
          │   geoengine CLI     │
-         │  (project run-tool) │
+         │       (run)         │
          └──────────┬──────────┘
                     │
                     ▼
@@ -294,10 +366,11 @@ gis:
 ```
 
 How it works:
-- Plugins discover tools by calling `geoengine project tools <project>` (JSON output)
-- Tool execution invokes `geoengine project run-tool` as a subprocess
+- Plugins are installed by `geoengine apply` based on the `plugins` section in `geoengine.yaml` if not already installed
+- **Discovery**: Plugins call `geoengine workers --json` to list workers, then `geoengine describe <worker> --json` to get each worker's parameter definitions as JSON
+- **Execution**: Plugins invoke `geoengine run <worker> --json --input KEY=VALUE` as a subprocess
 - Container logs stream to stderr in real-time (displayed as progress in the GIS UI)
-- On completion, a JSON result with output file paths is printed to stdout
+- On completion, a JSON result with status and output file paths is printed to stdout
 - Cancellation terminates the subprocess, which stops and removes the container
 
 ## GPU Support
@@ -326,54 +399,20 @@ sudo systemctl restart docker
 
 CUDA is not available on macOS. PyTorch will automatically use the MPS (Metal) backend for GPU acceleration.
 
-## API Reference
+## CLI Reference
 
-### CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `geoengine project init` | Create a new `geoengine.yaml` |
-| `geoengine project register <path>` | Register a project directory |
-| `geoengine project list [--json]` | List registered projects |
-| `geoengine project build <project>` | Build the Docker image |
-| `geoengine project run <project> <script>` | Run a named script |
-| `geoengine project tools <project>` | List GIS tools (JSON) |
-| `geoengine project run-tool <project> <tool> --input KEY=VALUE ...` | Run a GIS tool |
-| `geoengine project show <project>` | Show project configuration |
-| `geoengine run <image> [command]` | Run a container directly |
-| `geoengine image list\|pull\|import\|export\|remove` | Manage Docker images |
-| `geoengine service start\|stop\|status\|register` | Manage the legacy proxy service |
-| `geoengine deploy auth\|push\|pull\|list` | GCP Artifact Registry operations |
-
-### REST API Endpoints (Legacy Proxy)
-
-When the proxy service is running (`geoengine service start`):
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/health` | GET | Health check |
-| `/api/jobs` | GET | List jobs |
-| `/api/jobs` | POST | Submit job |
-| `/api/jobs/{id}` | GET | Get job status |
-| `/api/jobs/{id}` | DELETE | Cancel job |
-| `/api/jobs/{id}/output` | GET | Get job outputs |
-| `/api/projects` | GET | List projects |
-| `/api/projects/{name}/tools` | GET | Get project tools |
-
-### Job Submission
-
-```json
-POST /api/jobs
-{
-  "project": "my-project",
-  "tool": "classify",
-  "inputs": {
-    "input_raster": "/path/to/image.tif",
-    "model": "resnet50"
-  },
-  "output_dir": "/path/to/outputs"
-}
-```
+| Command                                                        | Description                                                                                 |
+|----------------------------------------------------------------|---------------------------------------------------------------------------------------------|
+| `geoengine init [--name]`                                      | Create a new `geoengine.yaml` template                                                      |
+| `geoengine apply <worker>`                                     | Register worker and manage GIS plugins                                                      |
+| `geoengine build [--no-cache] [--dev] [--build-arg KEY=VALUE]` | Build the Docker image (with file change detection and version enforcement in non-dev mode) |
+| `geoengine run <worker> --input KEY=VALUE [--json] [--dev]`    | Run a worker's command                                                                      |
+| `geoengine diff [--file all\|yaml\|docker\|command]`           | Check which tracked files have changed since last apply                                     |
+| `geoengine delete [--name <worker>]`                           | Delete a worker, clean up state and saved configuration                                     |
+| `geoengine workers [--json] [--gis arcgis\|qgis]`              | List registered workers                                                                     |
+| `geoengine describe <worker> [--json]`                         | Displays information from saved configuration file of specified worker                      |
+| `geoengine image list\|import\|remove`                         | Manage Docker images                                                                        |
+| `geoengine deploy auth\|push\|pull\|list`                      | GCP Artifact Registry operations                                                            |
 
 ## Building from Source
 

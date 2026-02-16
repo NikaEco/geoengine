@@ -15,20 +15,12 @@ from qgis.core import (
     QgsProcessingAlgorithm,
     QgsProcessingContext,
     QgsProcessingFeedback,
-    QgsProcessingParameterRasterLayer,
-    QgsProcessingParameterVectorLayer,
     QgsProcessingParameterString,
     QgsProcessingParameterNumber,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterFile,
-    QgsProcessingParameterFolderDestination,
-    QgsProcessingParameterRasterDestination,
-    QgsProcessingParameterVectorDestination,
     QgsProcessingParameterEnum,
     QgsProcessingProvider,
-    QgsProcessingOutputRasterLayer,
-    QgsProcessingOutputVectorLayer,
-    QgsProcessingOutputFile,
 )
 
 
@@ -51,7 +43,6 @@ class GeoEngineCLIClient:
             search_path = current_path + ":/usr/local/bin"
         path = shutil.which('geoengine', path=search_path)
         if path:
-            # Persist the updated PATH only once, when binary is actually found there
             if search_path != current_path:
                 os.environ["PATH"] = search_path
             return path
@@ -79,45 +70,39 @@ class GeoEngineCLIClient:
             raise Exception(f"geoengine version check failed: {result.stderr.strip()}")
         return {'status': 'healthy', 'version': result.stdout.strip()}
 
-    def list_projects(self) -> List[Dict]:
+    def list_workers(self) -> List[Dict]:
         result = subprocess.run(
-            [self.binary, 'project', 'list', '--json'],
+            [self.binary, 'workers', '--json', '--gis', 'qgis'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise Exception(f"Failed to list projects: {result.stderr.strip()}")
+            raise Exception(f"Failed to list workers: {result.stderr.strip()}")
         return json.loads(result.stdout)
 
-    def get_project_tools(self, name: str) -> List[Dict]:
+    def get_worker_tool(self, name: str) -> Optional[Dict]:
+        """Get the tool/input description for a worker via `geoengine run <name> --describe`."""
         result = subprocess.run(
-            [self.binary, 'project', 'tools', name],
+            [self.binary, 'describe', name, '--json'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise Exception(f"Failed to get tools for '{name}': {result.stderr.strip()}")
+            raise Exception(f"Failed to describe worker '{name}': {result.stderr.strip()}")
         return json.loads(result.stdout)
 
     def run_tool(
         self,
-        project: str,
-        tool: str,
+        worker: str,
         inputs: Dict[str, Any],
-        output_dir: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict:
-        """Run a tool synchronously, streaming container output via on_output.
+        """Run a worker synchronously, streaming container output via on_output.
 
         Input parameters are passed as --input KEY=VALUE flags.
-        The CLI maps these to script flags using the tool's input definitions
-        (using map_to if specified, otherwise the input name).
         File paths are auto-mounted into the container.
         """
-        cmd = [self.binary, 'project', 'run-tool', project, tool, '--json']
-        if output_dir:
-            cmd.extend(['--output-dir', output_dir])
+        cmd = [self.binary, 'run', worker, '--json']
 
-        # Add input parameters as --input KEY=VALUE
         for key, value in inputs.items():
             if value is not None:
                 cmd.extend(['--input', f'{key}={value}'])
@@ -178,12 +163,10 @@ class GeoEngineProvider(QgsProcessingProvider):
         self._algorithms = []
 
     def load(self) -> bool:
-        """Load the provider."""
         self._algorithms = self._discover_algorithms()
         return True
 
     def unload(self):
-        """Unload the provider."""
         pass
 
     def id(self) -> str:
@@ -199,7 +182,6 @@ class GeoEngineProvider(QgsProcessingProvider):
         return QgsProcessingProvider.icon(self)
 
     def loadAlgorithms(self):
-        """Load algorithms into the provider."""
         for alg in self._algorithms:
             self.addAlgorithm(alg)
 
@@ -209,19 +191,18 @@ class GeoEngineProvider(QgsProcessingProvider):
 
         try:
             client = GeoEngineCLIClient()
-            projects = client.list_projects()
+            workers = client.list_workers()
 
-            for project in projects:
-                tools = client.get_project_tools(project['name'])
-                for tool in tools:
-                    alg = GeoEngineAlgorithm(project['name'], tool)
+            for worker in workers:
+                if not worker.get('has_tool', False):
+                    continue
+                tool = client.get_worker_tool(worker['name'])
+                if tool:
+                    alg = GeoEngineAlgorithm(worker['name'], tool)
                     algorithms.append(alg)
-
 
         except Exception as e:
             print(f"GeoEngine tool discovery failed: {e}")
-            # Binary not found or other error, return empty list
-            pass
 
         return algorithms
 
@@ -232,101 +213,71 @@ class GeoEngineProvider(QgsProcessingProvider):
 
 
 class GeoEngineAlgorithm(QgsProcessingAlgorithm):
-    """Dynamic QGIS Processing algorithm for a GeoEngine tool."""
+    """Dynamic QGIS Processing algorithm for a GeoEngine worker."""
 
-    def __init__(self, project_name: str, tool_info: Dict):
+    def __init__(self, worker_name: str, tool_info: Dict):
         super().__init__()
-        self._project = project_name
+        self._worker = worker_name
         self._tool = tool_info
-        self._tool_name = tool_info['name']
         self._inputs = tool_info.get('inputs', [])
-        self._outputs = tool_info.get('outputs', [])
 
     def createInstance(self):
-        return GeoEngineAlgorithm(self._project, self._tool)
+        return GeoEngineAlgorithm(self._worker, self._tool)
 
     def name(self) -> str:
-        return f"{self._project}_{self._tool_name}"
+        return self._worker
 
     def displayName(self) -> str:
-        return self._tool.get('label', self._tool_name)
+        return self._tool.get('name', self._worker)
 
     def group(self) -> str:
-        return self._project
+        return ''
 
     def groupId(self) -> str:
-        return self._project
+        return ''
 
     def shortHelpString(self) -> str:
         return self._tool.get('description', '')
 
     def initAlgorithm(self, config=None):
-        """Define algorithm parameters."""
-        # Add input parameters
+        """Define algorithm parameters from worker's input definitions."""
         for inp in self._inputs:
-            param = self._create_parameter(inp, is_output=False)
+            param = self._create_parameter(inp)
             if param:
                 self.addParameter(param)
 
-        # Add output destination parameter
-        self.addParameter(
-            QgsProcessingParameterFolderDestination(
-                'OUTPUT_DIR',
-                'Output Directory'
-            )
-        )
-
-        # Add output parameters
-        for out in self._outputs:
-            param = self._create_parameter(out, is_output=True)
-            if param:
-                self.addParameter(param)
-
-    def _create_parameter(self, param_info: Dict, is_output: bool):
-        """Create a QGIS parameter from tool parameter info."""
+    def _create_parameter(self, param_info: Dict):
+        """Create a QGIS parameter from worker input parameter info."""
         param_type = param_info.get('param_type', 'string')
         name = param_info['name']
-        label = param_info.get('label', name)
+        label = param_info.get('description', name)
         required = param_info.get('required', True)
         default = param_info.get('default')
-        options = param_info.get('choices', [])
+        enum_values = param_info.get('enum_values', [])
 
-        if is_output:
-            if param_type == 'raster':
-                return QgsProcessingParameterRasterDestination(name, label)
-            elif param_type == 'vector':
-                return QgsProcessingParameterVectorDestination(name, label)
-            elif param_type == 'file':
-                return QgsProcessingParameterFolderDestination(name, label)
-            return None
-
-        # Input parameters
-        if param_type == 'raster':
-            param = QgsProcessingParameterRasterLayer(name, label, optional=not required)
-        elif param_type == 'vector':
-            param = QgsProcessingParameterVectorLayer(name, label, optional=not required)
-        elif param_type == 'string':
-            if len(options) > 0:
-                param = QgsProcessingParameterEnum(name, label, options, defaultValue=default, optional=not required, usesStaticStrings=True)
-            else:
-                param = QgsProcessingParameterString(name, label, defaultValue=default, optional=not required)
-        elif param_type == 'int':
-            param = QgsProcessingParameterNumber(
-                name, label, type=QgsProcessingParameterNumber.Integer,
-                defaultValue=default, optional=not required
-            )
-        elif param_type == 'float':
-            param = QgsProcessingParameterNumber(
-                name, label, type=QgsProcessingParameterNumber.Double,
-                defaultValue=default, optional=not required
-            )
-        elif param_type == 'bool':
-            param = QgsProcessingParameterBoolean(name, label, defaultValue=default or False, optional=not required)
-        elif param_type == 'file':
+        if param_type == 'file':
             param = QgsProcessingParameterFile(name, label, optional=not required)
         elif param_type == 'folder':
             param = QgsProcessingParameterFile(
                 name, label, behavior=QgsProcessingParameterFile.Folder, optional=not required
+            )
+        elif param_type == 'datetime':
+            param = QgsProcessingParameterString(name, label, defaultValue=default, optional=not required)
+        elif param_type == 'string':
+            param = QgsProcessingParameterString(name, label, defaultValue=default, optional=not required)
+        elif param_type == 'number':
+            param = QgsProcessingParameterNumber(
+                name, label, type=QgsProcessingParameterNumber.Double,
+                defaultValue=default, optional=not required
+            )
+        elif param_type == 'boolean':
+            param = QgsProcessingParameterBoolean(name, label, defaultValue=default or False, optional=not required)
+        elif param_type == 'enum':
+            if not enum_values:
+                enum_values = []
+            param = QgsProcessingParameterEnum(
+                name, label, enum_values, defaultValue=default,
+                optional=not required, usesStaticStrings=True
             )
         else:
             param = QgsProcessingParameterString(name, label, defaultValue=default, optional=not required)
@@ -342,51 +293,27 @@ class GeoEngineAlgorithm(QgsProcessingAlgorithm):
         """Execute the algorithm via geoengine CLI."""
         client = GeoEngineCLIClient()
 
-        # Build inputs
         inputs = {}
         for inp in self._inputs:
             name = inp['name']
             if name in parameters:
                 value = parameters[name]
-
-                # Convert QGIS layer to file path
                 if hasattr(value, 'source'):
                     value = value.source()
                 elif hasattr(value, 'dataProvider'):
                     value = value.dataProvider().dataSourceUri()
-
                 inputs[name] = str(value) if value is not None else None
 
-        # Get output directory
-        output_dir = self.parameterAsString(parameters, 'OUTPUT_DIR', context)
+        feedback.pushInfo(f"Running worker '{self._worker}'...")
 
-        feedback.pushInfo(f"Running tool '{self._tool_name}' for project '{self._project}'...")
-
-        # Run the tool synchronously, streaming container output
         result = client.run_tool(
-            project=self._project,
-            tool=self._tool_name,
+            worker=self._worker,
             inputs=inputs,
-            output_dir=output_dir,
             on_output=lambda line: feedback.pushInfo(line),
             is_cancelled=lambda: feedback.isCanceled(),
         )
 
-        feedback.pushInfo("Tool completed successfully!")
+        feedback.pushInfo("Worker completed successfully!")
         feedback.setProgress(100)
 
-        # Build result dictionary
-        results = {'OUTPUT_DIR': output_dir}
-
-        output_files = result.get('files', [])
-        feedback.pushInfo(f"Output files: {len(output_files)}")
-
-        for out in self._outputs:
-            name = out['name']
-            # Try to find matching output file
-            for f in output_files:
-                if name.lower() in f['name'].lower():
-                    results[name] = f['path']
-                    break
-
-        return results
+        return {'status': result.get('status', 'completed')}

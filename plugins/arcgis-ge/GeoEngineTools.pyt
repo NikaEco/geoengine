@@ -22,14 +22,15 @@ class Toolbox:
         """Discover available tools from the geoengine CLI."""
         try:
             client = GeoEngineClient()
-            projects = client.list_projects()
+            workers = client.list_workers()
 
             tools = []
-            for project in projects:
-                project_tools = client.get_project_tools(project['name'])
-                for tool_info in project_tools:
-                    # Create a dynamic tool class for each tool
-                    tool_class = self._create_tool_class(project['name'], tool_info)
+            for worker in workers:
+                if not worker.get('has_tool', False):
+                    continue
+                tool_info = client.get_worker_tool(worker['name'])
+                if tool_info:
+                    tool_class = self._create_tool_class(worker['name'], tool_info)
                     tools.append(tool_class)
 
             return tools if tools else [GeoEngineStatusTool]
@@ -37,67 +38,60 @@ class Toolbox:
             arcpy.AddWarning(f"Could not discover GeoEngine tools: {e}")
             return [GeoEngineStatusTool]
 
-    def _create_tool_class(self, project_name, tool_info):
-        """Create a dynamic tool class for a GeoEngine tool."""
+    def _create_tool_class(self, worker_name, tool_info):
+        """Create a dynamic tool class for a GeoEngine worker."""
 
         class DynamicTool:
             def __init__(self):
-                self.label = tool_info.get('label', tool_info['name'])
+                self.label = tool_info.get('name', worker_name)
                 self.description = tool_info.get('description', '')
-                self.category = project_name
+                self.category = 'GeoEngine'
                 self.canRunInBackground = True
-                self._project = project_name
-                self._tool_name = tool_info['name']
+                self._worker = worker_name
                 self._inputs = tool_info.get('inputs', [])
-                self._outputs = tool_info.get('outputs', [])
 
             def getParameterInfo(self):
                 """Define parameter definitions."""
                 params = []
-
-                # Input parameters
-                for i, inp in enumerate(self._inputs):
-                    param = self._create_parameter(inp, 'Input')
+                for inp in self._inputs:
+                    param = self._create_parameter(inp)
                     params.append(param)
-
-                # Output parameters
-                for i, out in enumerate(self._outputs):
-                    param = self._create_parameter(out, 'Output')
-                    param.direction = 'Output'
-                    params.append(param)
-
                 return params
 
-            def _create_parameter(self, param_info, direction):
-                """Create an arcpy parameter from tool parameter info."""
+            def _create_parameter(self, param_info):
+                """Create an arcpy parameter from worker input parameter info."""
                 param_type = param_info.get('param_type', 'string')
 
-                # Map GeoEngine types to ArcGIS types
                 type_map = {
-                    'raster': 'GPRasterLayer',
-                    'vector': 'GPFeatureLayer',
-                    'string': 'GPString',
-                    'int': 'GPLong',
-                    'float': 'GPDouble',
-                    'bool': 'GPBoolean',
-                    'folder': 'DEFolder',
                     'file': 'DEFile',
+                    'folder': 'DEFolder',
+                    'datetime': 'GPString',
+                    'string': 'GPString',
+                    'number': 'GPDouble',
+                    'boolean': 'GPBoolean',
+                    'enum': 'GPString',
                 }
 
                 arcpy_type = type_map.get(param_type, 'GPString')
                 required = param_info.get('required', True)
 
                 param = arcpy.Parameter(
-                    displayName=param_info.get('label', param_info['name']),
+                    displayName=param_info.get('description', param_info['name']),
                     name=param_info['name'],
                     datatype=arcpy_type,
                     parameterType='Required' if required else 'Optional',
-                    direction=direction,
+                    direction='Input',
                 )
 
-                # Set default value if provided
                 if 'default' in param_info and param_info['default'] is not None:
                     param.value = param_info['default']
+
+                # For enum type, set the filter list
+                if param_type == 'enum':
+                    enum_values = param_info.get('enum_values', [])
+                    if enum_values:
+                        param.filter.type = "ValueList"
+                        param.filter.list = enum_values
 
                 return param
 
@@ -115,34 +109,23 @@ class Toolbox:
                 try:
                     client = GeoEngineClient()
 
-                    # Build inputs dict
                     inputs = {}
-                    output_dir = None
-
                     for param in parameters:
-                        if param.direction == 'Input' and param.value is not None:
-                            # Convert to string path if it's a dataset
+                        if param.value is not None:
                             if hasattr(param.value, 'dataSource'):
                                 inputs[param.name] = param.value.dataSource
                             else:
                                 inputs[param.name] = str(param.value)
-                        elif param.direction == 'Output':
-                            # Use output parameter location as output directory
-                            if param.value:
-                                output_path = str(param.value)
-                                output_dir = os.path.dirname(output_path)
 
-                    messages.addMessage(f"Running tool '{self._tool_name}'...")
+                    messages.addMessage(f"Running worker '{self._worker}'...")
 
                     result = client.run_tool(
-                        project=self._project,
-                        tool=self._tool_name,
+                        worker=self._worker,
                         inputs=inputs,
-                        output_dir=output_dir,
                         on_output=lambda line: messages.addMessage(line),
                     )
 
-                    messages.addMessage("Tool completed successfully!")
+                    messages.addMessage("Worker completed successfully!")
                     output_files = result.get('files', [])
                     if output_files:
                         messages.addMessage(f"Output files: {len(output_files)}")
@@ -155,8 +138,7 @@ class Toolbox:
             def postExecute(self, parameters):
                 return
 
-        # Set a unique class name
-        DynamicTool.__name__ = f"{project_name}_{tool_info['name']}"
+        DynamicTool.__name__ = f"geoengine_{worker_name}"
         return DynamicTool
 
 
@@ -165,7 +147,7 @@ class GeoEngineStatusTool:
 
     def __init__(self):
         self.label = "Check GeoEngine Status"
-        self.description = "Check that the geoengine CLI binary is available and list registered projects"
+        self.description = "Check that the geoengine CLI binary is available and list registered workers"
         self.canRunInBackground = False
 
     def getParameterInfo(self):
@@ -188,16 +170,14 @@ class GeoEngineStatusTool:
             messages.addMessage(f"GeoEngine: {info['version']}")
             messages.addMessage(f"Status: {info['status']}")
 
-            # List projects
-            projects = client.list_projects()
-            if projects:
-                messages.addMessage(f"\nRegistered Projects ({len(projects)}):")
-                for p in projects:
-                    messages.addMessage(
-                        f"  - {p['name']} ({p.get('tools_count', 0)} tools)"
-                    )
+            workers = client.list_workers()
+            if workers:
+                messages.addMessage(f"\nRegistered Workers ({len(workers)}):")
+                for w in workers:
+                    has_tool = "yes" if w.get('has_tool', False) else "no"
+                    messages.addMessage(f"  - {w['name']} (tool: {has_tool})")
             else:
-                messages.addMessage("\nNo projects registered.")
+                messages.addMessage("\nNo workers registered.")
 
         except FileNotFoundError as e:
             messages.addErrorMessage(str(e))

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 GeoEngine Client - CLI-based client library for GeoEngine.
-Invokes the geoengine binary directly via subprocess (no HTTP proxy required).
+Invokes the geoengine binary directly via subprocess.
 Used by ArcGIS Pro toolbox and can be used standalone.
 """
 
@@ -16,10 +16,6 @@ class GeoEngineClient:
     """Client that invokes the geoengine CLI binary via subprocess."""
 
     def __init__(self):
-        """
-        Initialize the GeoEngine client.
-        Locates the geoengine binary on the system.
-        """
         self.binary = self._find_binary()
 
     @staticmethod
@@ -29,7 +25,6 @@ class GeoEngineClient:
         if path:
             return path
 
-        # Fallback locations
         home = os.path.expanduser('~')
         for candidate in [
             os.path.join(home, '.geoengine', 'bin', 'geoengine'),
@@ -45,12 +40,7 @@ class GeoEngineClient:
         )
 
     def version_check(self) -> Dict:
-        """
-        Check the geoengine binary version.
-
-        Returns:
-            Dict with status and version information
-        """
+        """Check the geoengine binary version."""
         result = subprocess.run(
             [self.binary, '--version'],
             capture_output=True, text=True, timeout=10
@@ -62,75 +52,49 @@ class GeoEngineClient:
             'version': result.stdout.strip(),
         }
 
-    def list_projects(self) -> List[Dict]:
-        """
-        List all registered projects.
-
-        Returns:
-            List of project summaries with name, path, and tools_count
-        """
+    def list_workers(self) -> List[Dict]:
+        """List all registered workers."""
         result = subprocess.run(
-            [self.binary, 'project', 'list', '--json'],
+            [self.binary, 'workers', '--json'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise Exception(f"Failed to list projects: {result.stderr.strip()}")
+            raise Exception(f"Failed to list workers: {result.stderr.strip()}")
         return json.loads(result.stdout)
 
-    def get_project_tools(self, name: str) -> List[Dict]:
-        """
-        Get the list of tools available in a project.
-
-        Args:
-            name: Project name
-
-        Returns:
-            List of tool definitions with inputs and outputs
-        """
+    def get_worker_tool(self, name: str) -> Optional[Dict]:
+        """Get the tool/input description for a worker via `geoengine run <name> --describe`."""
         result = subprocess.run(
-            [self.binary, 'project', 'tools', name],
+            [self.binary, 'describe', name, '--json'],
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            raise Exception(f"Failed to get tools for '{name}': {result.stderr.strip()}")
+            raise Exception(f"Failed to describe worker '{name}': {result.stderr.strip()}")
         return json.loads(result.stdout)
 
     def run_tool(
         self,
-        project: str,
-        tool: str,
+        worker: str,
         inputs: Dict[str, Any],
-        output_dir: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict:
-        """
-        Run a GIS tool synchronously, streaming progress via on_output callback.
+        """Run a worker synchronously, streaming progress via on_output callback.
 
         Input parameters are passed as --input KEY=VALUE flags.
-        The CLI maps these to script flags using the tool's input definitions
-        (using map_to if specified, otherwise the input name).
         File paths are auto-mounted into the container.
 
         Args:
-            project: Project name
-            tool: Tool name to execute
+            worker: Worker name
             inputs: Input parameters as key-value pairs
-            output_dir: Directory to write output files
             on_output: Callback called with each line of container output
             is_cancelled: Callback that returns True if the user requested cancellation
 
         Returns:
-            Dict with status, exit_code, output_dir, and files list
-
-        Raises:
-            Exception: If the tool fails or is cancelled
+            Dict with status, exit_code, and files list
         """
-        cmd = [self.binary, 'project', 'run-tool', project, tool, '--json']
-        if output_dir:
-            cmd.extend(['--output-dir', output_dir])
+        cmd = [self.binary, 'run', worker, '--json']
 
-        # Add input parameters as --input KEY=VALUE
         for key, value in inputs.items():
             if value is not None:
                 cmd.extend(['--input', f'{key}={value}'])
@@ -143,7 +107,6 @@ class GeoEngineClient:
         )
 
         try:
-            # Read stderr line-by-line for real-time progress
             for line in iter(process.stderr.readline, ''):
                 if line:
                     stripped = line.rstrip('\n')
@@ -160,12 +123,10 @@ class GeoEngineClient:
 
             process.wait()
 
-            # Read structured JSON result from stdout
             stdout_data = process.stdout.read()
             if process.returncode == 0 and stdout_data.strip():
                 return json.loads(stdout_data)
             elif process.returncode != 0:
-                # Try to parse JSON error from stdout
                 if stdout_data.strip():
                     try:
                         return json.loads(stdout_data)
@@ -183,27 +144,13 @@ class GeoEngineClient:
 
 # Convenience function for standalone use
 def run_tool(
-    project: str,
-    tool: str,
+    worker: str,
     inputs: Dict[str, Any],
-    output_dir: Optional[str] = None,
     on_output: Optional[Callable[[str], None]] = None,
 ) -> Dict:
-    """
-    Run a GeoEngine tool and wait for completion.
-
-    Args:
-        project: Project name
-        tool: Tool name
-        inputs: Input parameters
-        output_dir: Output directory
-        on_output: Callback for progress output lines
-
-    Returns:
-        Dict with status, exit_code, output_dir, and files list
-    """
+    """Run a GeoEngine worker and wait for completion."""
     client = GeoEngineClient()
-    return client.run_tool(project, tool, inputs, output_dir, on_output=on_output)
+    return client.run_tool(worker, inputs, on_output=on_output)
 
 
 if __name__ == '__main__':
@@ -215,10 +162,11 @@ if __name__ == '__main__':
         info = client.version_check()
         print(f"GeoEngine: {info['version']}")
 
-        projects = client.list_projects()
-        print(f"\nRegistered Projects: {len(projects)}")
-        for p in projects:
-            print(f"  - {p['name']} ({p.get('tools_count', 0)} tools)")
+        workers = client.list_workers()
+        print(f"\nRegistered Workers: {len(workers)}")
+        for w in workers:
+            has_tool = "yes" if w.get('has_tool', False) else "no"
+            print(f"  - {w['name']} (tool: {has_tool})")
 
     except Exception as e:
         print(f"Error: {e}")
