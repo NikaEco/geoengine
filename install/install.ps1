@@ -225,16 +225,16 @@ function Show-Success {
     Write-Host "Get started:"
     Write-Host "  geoengine --help              " -ForegroundColor Cyan -NoNewline
     Write-Host "Show all commands"
-    Write-Host "  geoengine project init        " -ForegroundColor Cyan -NoNewline
-    Write-Host "Create a new project"
-    Write-Host "  geoengine service start       " -ForegroundColor Cyan -NoNewline
-    Write-Host "Start the proxy service"
+    Write-Host "  geoengine init                " -ForegroundColor Cyan -NoNewline
+    Write-Host "Initialize a new worker (creates geoengine.yaml)"
+    Write-Host "  geoengine build               " -ForegroundColor Cyan -NoNewline
+    Write-Host "Build the Docker image for a worker"
+    Write-Host "  geoengine apply               " -ForegroundColor Cyan -NoNewline
+    Write-Host "Register or update a worker"
     Write-Host ""
     Write-Host "For GIS integration:"
-    Write-Host "  geoengine service register arcgis  " -ForegroundColor Cyan -NoNewline
-    Write-Host "Register with ArcGIS Pro"
-    Write-Host "  geoengine service register qgis    " -ForegroundColor Cyan -NoNewline
-    Write-Host "Register with QGIS"
+    Write-Host "  geoengine apply               " -ForegroundColor Cyan -NoNewline
+    Write-Host "Registers worker with ArcGIS Pro / QGIS (set in geoengine.yaml)"
     Write-Host ""
     Write-Host "Documentation: $RepoUrl"
     Write-Host ""
